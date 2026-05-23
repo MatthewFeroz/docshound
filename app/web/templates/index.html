@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Docs Gap Agent — Mission Control</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+<script src="https://unpkg.com/htmx.org@1.9.12/dist/ext/sse.js"></script>
+</head>
+<body hx-ext="sse">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">▣</span>
+      <div>
+        <h1>Docs Gap Agent</h1>
+        <p>GitHub issues → clustered gaps → citeable docs</p>
+      </div>
+    </div>
+    <form class="run-form"
+          hx-post="/web/runs"
+          hx-target="#run-mount"
+          hx-swap="innerHTML"
+          hx-disabled-elt="find button">
+      <input class="repo-input" name="repo" value="{{ default_repo }}"
+             placeholder="owner/repo" autocomplete="off" required>
+      <input type="hidden" name="limit" value="50">
+      <input type="hidden" name="docs_url" value="https://ddtrace.readthedocs.io/">
+      <button type="submit" class="run-btn">
+        <span class="run-arrow">▶</span> Run agent
+      </button>
+    </form>
+  </header>
+
+  <main id="run-mount">
+    <section class="placeholder">
+      <div class="placeholder-card">
+        <h2>An autonomous agent that finds <em>real</em> documentation gaps.</h2>
+        <ul class="placeholder-steps">
+          <li><span class="step-num">1</span> Scrapes recent issues from any public GitHub repo</li>
+          <li><span class="step-num">2</span> An LLM router clusters them into recurring questions</li>
+          <li><span class="step-num">3</span> Persists the audit trail to <strong>ClickHouse</strong></li>
+          <li><span class="step-num">4</span> Publishes citeable answers via <strong>Senso</strong></li>
+          <li><span class="step-num">5</span> Every tool call is traced through <strong>Datadog</strong></li>
+        </ul>
+        <p class="placeholder-hint">Enter a repo above and hit <strong>Run agent</strong>.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="tools-bar">
+    <div class="dots">
+      <span class="dot" id="dot-github"><span class="dot-mark"></span>GitHub</span>
+      <span class="dot" id="dot-openai"><span class="dot-mark"></span>OpenAI</span>
+      <span class="dot" id="dot-clickhouse"><span class="dot-mark"></span>ClickHouse</span>
+      <span class="dot" id="dot-senso"><span class="dot-mark"></span>Senso</span>
+      <span class="dot" id="dot-nimble"><span class="dot-mark"></span>Nimble</span>
+      <span class="dot" id="dot-datadog"><span class="dot-mark"></span>Datadog</span>
+    </div>
+    <div id="stats" class="stats">Awaiting first run.</div>
+  </footer>
+</body>
+</html>

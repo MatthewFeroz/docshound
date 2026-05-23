@@ -1,0 +1,8 @@
+<li class="event kind-{{ kind }}">
+  <span class="event-icon">{{ icon }}</span>
+  <div class="event-body">
+    <div class="event-label">{{ label }}</div>
+    {% if detail %}<div class="event-detail">{{ detail }}</div>{% endif %}
+  </div>
+  {% if meta %}<span class="event-meta">{{ meta }}</span>{% endif %}
+</li>

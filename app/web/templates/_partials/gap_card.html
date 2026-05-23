@@ -1,0 +1,42 @@
+<article class="gap-card sev-{{ cluster.severity }}" id="gap-{{ index }}">
+  <header class="gap-head">
+    <span class="sev-pill sev-{{ cluster.severity }}">{{ cluster.severity|upper }}</span>
+    <h3>{{ cluster.name }}</h3>
+  </header>
+  <p class="gap-question">{{ cluster.recurring_question }}</p>
+  <p class="gap-summary">{{ cluster.summary }}</p>
+  <section class="review-box">
+    <div class="review-label">Human review draft</div>
+    <h4>{{ cluster.draft_title or cluster.name }}</h4>
+    <p>{{ cluster.draft_summary or cluster.summary }}</p>
+    <details>
+      <summary>Preview generated markdown</summary>
+      <pre>{{ cluster.draft_markdown or cluster.summary }}</pre>
+    </details>
+  </section>
+  <footer class="gap-foot">
+    <div class="gap-meta">
+      <span>{{ cluster.issue_numbers|length }} issues</span>
+      <span class="dot-sep">·</span>
+      <span>confidence {{ '%.0f'|format(cluster.confidence * 100) }}%</span>
+      <span class="dot-sep">·</span>
+      <span>{{ cluster.review_status|replace('_', ' ') }}</span>
+    </div>
+    <div class="gap-actions" id="gap-{{ index }}-actions">
+      <button class="publish-btn"
+              hx-post="/runs/{{ run_id }}/gaps/{{ index }}/publish"
+              hx-target="#gap-{{ index }}-actions"
+              hx-swap="innerHTML"
+              hx-disabled-elt="this">
+        Approve + publish ▸ Senso
+      </button>
+      <button class="reject-btn"
+              hx-post="/runs/{{ run_id }}/gaps/{{ index }}/reject"
+              hx-target="#gap-{{ index }}-actions"
+              hx-swap="innerHTML"
+              hx-disabled-elt="this">
+        Reject
+      </button>
+    </div>
+  </footer>
+</article>

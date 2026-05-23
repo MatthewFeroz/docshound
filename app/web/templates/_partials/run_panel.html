@@ -1,0 +1,36 @@
+<div class="run-panel"
+     sse-connect="/runs/{{ run_id }}/events"
+     data-run-id="{{ run_id }}">
+  <section class="panel timeline-panel">
+    <header class="panel-head">
+      <h2>Agent Timeline</h2>
+      <span class="panel-sub">run <code>{{ run_id[:8] }}</code></span>
+    </header>
+    <ol id="timeline" class="timeline"
+        sse-swap="timeline"
+        hx-swap="beforeend scroll:bottom">
+      <li class="event kind-system">
+        <span class="event-icon">●</span>
+        <div class="event-body">
+          <div class="event-label">awaiting first agent decision…</div>
+          <div class="event-detail">repo {{ repo }}</div>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <section class="panel gaps-panel">
+    <header class="panel-head">
+      <h2>Doc Gaps Discovered</h2>
+      <span class="panel-sub" id="gaps-count">0 found</span>
+    </header>
+    <div class="gaps"
+         sse-swap="gap_card"
+         hx-swap="beforeend">
+      <div class="gaps-empty" id="gaps-empty">
+        Once the agent finishes clustering, gaps will stream in here.
+      </div>
+    </div>
+    <div hidden sse-swap="oob" hx-swap="none"></div>
+  </section>
+</div>
