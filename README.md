@@ -1,7 +1,7 @@
 # DocsHound
 
 <p align="center">
-  <img src="app/web/static/logos/docshound.svg" alt="DocsHound" width="180">
+  <img src="app/web/static/logos/docshound-logo.svg" alt="DocsHound" width="180">
 </p>
 
 DocsHound turns open issues and merged pull requests into grounded,
