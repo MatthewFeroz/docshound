@@ -1,7 +1,7 @@
 [project]
-name = "docs-gap-agent"
+name = "docshound"
 version = "0.1.0"
-description = "Autonomous docs gap agent for GitHub issues"
+description = "DocsHound turns GitHub issues and merged pull requests into citeable documentation"
 requires-python = ">=3.11"
 dependencies = []
 

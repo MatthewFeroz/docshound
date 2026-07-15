@@ -1,42 +1,32 @@
-{% if cluster.published_url %}
-<section class="finding-payment">
+{% if approved_document %}
+<section class="approval-callout">
   <div>
-    <div class="review-label">Solved finding</div>
-    <h3>Published to the portal</h3>
-    <p>This finding has already been published as a citeable Senso document for the company view.</p>
+    {% if documentation_change and documentation_change.status == "created" %}
+    <div class="review-label">Documentation PR created</div>
+    <h3>This revision is ready for repository review</h3>
+    <p>Open the pull request, review the documentation preview, and merge when ready.</p>
+    {% elif documentation_change %}
+    <div class="review-label">Documentation change prepared</div>
+    <h3>The exact repository patch is ready</h3>
+    <p>Review the destination, Markdown or MDX output, and patch before creating the pull request.</p>
+    {% else %}
+    <div class="review-label">Approved document</div>
+    <h3>This revision is ready to reuse</h3>
+    <p>Open the document to copy it or prepare a documentation pull request.</p>
+    {% endif %}
   </div>
-  <a class="publish-btn" href="{{ cluster.published_url }}" target="_blank" rel="noopener">
-    Open published fix
+  {% if documentation_change and documentation_change.status == "created" %}
+  <a class="publish-btn" href="{{ documentation_change.pr_url }}" target="_blank" rel="noopener">
+    Open pull request
   </a>
-</section>
-{% elif cluster.review_status == "approved" %}
-<section class="finding-payment">
-  <div>
-    <div class="review-label">Step 3</div>
-    <h3>Publish to the portal</h3>
-    <p>The company approved this agent-authored Senso document. Publish it to the portal with the traced product issue evidence attached.</p>
-  </div>
-  <button class="publish-btn"
-          hx-post="/runs/{{ run_id }}/gaps/{{ index }}/publish"
-          hx-target="#finding-actions"
-          hx-swap="innerHTML"
-          hx-disabled-elt="this">
-    Publish to portal
-  </button>
-</section>
-{% else %}
-<section class="finding-payment">
-  <div>
-    <div class="review-label">Step 2</div>
-    <h3>Approve agent-authored Senso doc</h3>
-    <p>Confirm the generated documentation fix is ready. Approval unlocks publishing to the company portal.</p>
-  </div>
-  <button class="publish-btn"
-          hx-post="/runs/{{ run_id }}/gaps/{{ index }}/approve"
-          hx-target="#finding-actions"
-          hx-swap="innerHTML"
-          hx-disabled-elt="this">
-    Approve Senso doc
-  </button>
+  {% elif documentation_change %}
+  <a class="publish-btn" href="/docs/{{ approved_document.slug }}/pull-request">
+    Review repository change
+  </a>
+  {% else %}
+  <a class="publish-btn" href="/docs/{{ approved_document.slug }}">
+    Open approved document
+  </a>
+  {% endif %}
 </section>
 {% endif %}

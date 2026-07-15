@@ -3,7 +3,7 @@ from datetime import datetime
 import httpx
 
 from app.config import get_settings
-from app.state import Issue
+from app.state import Issue, PullRequest
 
 
 class GitHubToolError(RuntimeError):
@@ -15,7 +15,7 @@ async def research_repo(repo: str, limit: int) -> list[Issue]:
     headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "docs-gap-agent-hackathon",
+        "User-Agent": "docshound",
     }
     if settings.github_token:
         headers["Authorization"] = f"Bearer {settings.github_token}"
@@ -68,3 +68,66 @@ async def research_repo(repo: str, limit: int) -> list[Issue]:
                 if len(issues) >= limit:
                     return issues
     return issues
+
+
+async def research_pull_requests(repo: str, limit: int) -> list[PullRequest]:
+    """Fetch recently merged pull requests independently from the issue limit."""
+    settings = get_settings()
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "docshound",
+    }
+    if settings.github_token:
+        headers["Authorization"] = f"Bearer {settings.github_token}"
+
+    url = f"https://api.github.com/repos/{repo}/pulls"
+    pull_requests: list[PullRequest] = []
+    target = min(limit, 30)
+    async with httpx.AsyncClient(timeout=20) as client:
+        for page in range(1, 6):
+            response = await client.get(
+                url,
+                headers=headers,
+                params={
+                    "state": "closed",
+                    "per_page": 100,
+                    "page": page,
+                    "sort": "updated",
+                    "direction": "desc",
+                },
+            )
+            if response.status_code == 404:
+                raise GitHubToolError(f"Repository not found or inaccessible: {repo}")
+            if response.status_code >= 400:
+                raise GitHubToolError(
+                    f"GitHub API failed with {response.status_code}: {response.text[:300]}"
+                )
+            items = response.json()
+            if not items:
+                break
+            for item in items:
+                if not item.get("merged_at"):
+                    continue
+                pull_requests.append(
+                    PullRequest(
+                        number=item["number"],
+                        title=item["title"],
+                        body=item.get("body"),
+                        url=item["html_url"],
+                        state="merged",
+                        merged_at=datetime.fromisoformat(
+                            item["merged_at"].replace("Z", "+00:00")
+                        ),
+                        labels=[label["name"] for label in item.get("labels", [])],
+                        created_at=datetime.fromisoformat(
+                            item["created_at"].replace("Z", "+00:00")
+                        ),
+                        updated_at=datetime.fromisoformat(
+                            item["updated_at"].replace("Z", "+00:00")
+                        ),
+                    )
+                )
+                if len(pull_requests) >= target:
+                    return pull_requests
+    return pull_requests

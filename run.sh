@@ -13,4 +13,4 @@ fi
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 VENV_BIN="${ROOT}/.venv/bin"
 
-exec "${VENV_BIN}/ddtrace-run" "${VENV_BIN}/uvicorn" app.main:app --reload --host 127.0.0.1 --port 8000
+exec "${VENV_BIN}/uvicorn" app.main:app --reload --host 127.0.0.1 --port 8000

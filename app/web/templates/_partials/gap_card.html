@@ -16,13 +16,15 @@
   </section>
   <footer class="gap-foot">
     <div class="gap-meta">
-      <span>{{ cluster.issue_numbers|length }} issues</span>
+      <span>{% if cluster.finding_type == "shipped_change" %}shipped change{% else %}open gap{% endif %}</span>
+      <span class="dot-sep">·</span>
+      <span>{{ cluster.issue_numbers|length + cluster.pr_numbers|length }} sources</span>
       <span class="dot-sep">·</span>
       <span>confidence {{ '%.0f'|format(cluster.confidence * 100) }}%</span>
       <span class="dot-sep">·</span>
       <span>{{ cluster.review_status|replace('_', ' ') }}</span>
       <span class="dot-sep">·</span>
-      <span>ready to publish</span>
+      <span>ready to review</span>
     </div>
     <div class="gap-actions" id="gap-{{ index }}-actions">
       <a class="publish-btn" href="/runs/{{ run_id }}/gaps/{{ index }}">

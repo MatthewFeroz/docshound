@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ document.title }} · DocsHound</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% include "_partials/favicon.html" %}
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="document-shell">
+  <header class="document-toolbar">
+    <a class="document-brand" href="/">
+      <img src="{{ docshound_icon }}" alt="">
+      <span>DocsHound</span>
+    </a>
+    <div class="document-actions">
+      <button type="button" class="document-action" id="copy-markdown">Copy Markdown</button>
+      <a class="document-action" href="/docs/{{ document.slug }}/download">Download .md</a>
+    </div>
+  </header>
+
+  <main class="document-page">
+    <article class="document-paper">
+      <div class="document-meta">
+        <span>Approved document</span>
+        <span>{{ document.repo }}</span>
+        <span>{{ document.approved_at[:10] }}</span>
+      </div>
+      <h1>{{ document.title }}</h1>
+      {% if document.summary %}<p class="document-summary">{{ document.summary }}</p>{% endif %}
+
+      <nav class="document-tabs" aria-label="Document view">
+        <button type="button" class="document-tab active" data-view="rendered">Rendered</button>
+        <button type="button" class="document-tab" data-view="markdown">Markdown</button>
+      </nav>
+
+      <section id="rendered-view" class="document-content">
+        {{ rendered_markdown | safe }}
+      </section>
+      <section id="markdown-view" class="document-raw" hidden>
+        <textarea id="raw-markdown" readonly>{{ document.markdown }}</textarea>
+      </section>
+
+      {% if document.source_issues %}
+      <footer class="document-sources">
+        <strong>Repository sources</strong>
+        {% for source in document.source_issues %}
+        <a href="{{ source.url }}" target="_blank" rel="noopener">{% if source.kind|default('issue') == 'pull_request' %}Merged PR {% else %}Issue {% endif %}#{{ source.number }} {{ source.title }}</a>
+        {% endfor %}
+      </footer>
+      {% endif %}
+
+      <section class="document-export">
+        <div>
+          <span class="document-export-kicker">Next step</span>
+          {% if documentation_change and documentation_change.status == "created" %}
+          <h2>Documentation pull request created</h2>
+          <p>The approved page is ready for repository review and merge.</p>
+          {% elif documentation_change %}
+          <h2>Documentation change prepared</h2>
+          <p>Review the target file and exact patch before creating the pull request.</p>
+          {% else %}
+          <h2>Send this to the documentation repository</h2>
+          <p>DocsHound will detect the repository structure, choose Markdown or MDX, and prepare an exact patch.</p>
+          {% endif %}
+        </div>
+        {% if documentation_change and documentation_change.status == "created" %}
+        <a class="document-primary-action" href="{{ documentation_change.pr_url }}" target="_blank" rel="noopener">Open pull request</a>
+        {% elif documentation_change %}
+        <a class="document-primary-action" href="/docs/{{ document.slug }}/pull-request">Review change</a>
+        {% else %}
+        <form class="document-export-form" action="/docs/{{ document.slug }}/pull-request/preview" method="post">
+          <label>
+            Documentation repository
+            <input name="target_repo" value="{{ document.repo }}" required pattern="[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+">
+          </label>
+          <label>
+            File path <span>optional</span>
+            <input name="file_path" placeholder="Auto-detect from the repository">
+          </label>
+          <button class="document-primary-action" type="submit">Prepare documentation PR</button>
+        </form>
+        {% endif %}
+      </section>
+    </article>
+  </main>
+
+  <div class="copy-toast" id="copy-toast" role="status" aria-live="polite"></div>
+  <script>
+    const tabs = document.querySelectorAll("[data-view]");
+    const renderedView = document.getElementById("rendered-view");
+    const markdownView = document.getElementById("markdown-view");
+    const rawMarkdown = document.getElementById("raw-markdown");
+    const toast = document.getElementById("copy-toast");
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const showMarkdown = tab.dataset.view === "markdown";
+        renderedView.hidden = showMarkdown;
+        markdownView.hidden = !showMarkdown;
+        tabs.forEach((item) => item.classList.toggle("active", item === tab));
+      });
+    });
+
+    document.getElementById("copy-markdown").addEventListener("click", async () => {
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(rawMarkdown.value);
+        copied = true;
+      } catch (error) {
+        markdownView.hidden = false;
+        renderedView.hidden = true;
+        tabs.forEach((item) => item.classList.toggle("active", item.dataset.view === "markdown"));
+        rawMarkdown.focus();
+        rawMarkdown.select();
+        copied = document.execCommand("copy");
+      }
+      toast.textContent = copied ? "Markdown copied" : "Select the Markdown and copy it manually";
+      toast.classList.add("show");
+      window.setTimeout(() => toast.classList.remove("show"), 2200);
+    });
+  </script>
+</body>
+</html>

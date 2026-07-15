@@ -1,51 +1,112 @@
 import asyncio
 import json
+import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Form, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
 from app import events
+from app.approved_documents import (
+    document_body_markdown,
+    get_approved_document,
+    get_approved_document_for_gap,
+    render_markdown,
+    save_approved_document,
+)
 from app.agent import run_agent
-from app.payments import (
-    create_checkout_session,
-    format_dollars,
-    price_for_severity,
-    verify_checkout_session,
+from app.documentation_prs import (
+    DocumentationPullRequestError,
+    create_documentation_pull_request,
+    get_documentation_change,
+    prepare_documentation_change,
+    write_enabled,
 )
 from app.render import render_events
+from app.run_store import load_run, load_runs, save_run
 from app.state import RUNS, AgentState, RunRequest, RunResponse
-from app.tools.senso import publish_citeable
-from app.config import get_settings
 
 WEB_DIR = Path(__file__).parent / "web"
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
-templates.env.globals["gitshell_icon"] = "/static/logos/gitshell-icon.svg"
-templates.env.globals["gitshell_logo"] = "/static/logos/gitshell.svg"
+templates.env.globals["docshound_icon"] = "/static/logos/docshound.png"
+templates.env.globals["docshound_logo"] = "/static/logos/docshound.png"
 
-app = FastAPI(title="Git Shell", version="0.2.0")
+app = FastAPI(title="DocsHound", version="0.2.0")
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
+
+REPO_PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+for persisted_run in load_runs():
+    RUNS.setdefault(persisted_run.run_id, persisted_run)
+
+
+def _get_run_state(run_id: str) -> AgentState | None:
+    state = RUNS.get(run_id)
+    if state is None:
+        state = load_run(run_id)
+        if state is not None:
+            RUNS[run_id] = state
+    return state
+
+
+def _normalize_repo(value: str) -> str:
+    raw = value.strip()
+    if not raw:
+        raise ValueError("Enter a repository such as owner/repository.")
+
+    if "://" in raw:
+        parsed = urlparse(raw)
+        if parsed.hostname not in {"github.com", "www.github.com"}:
+            raise ValueError("Enter a GitHub repository URL or owner/repository.")
+        path = parsed.path
+    elif raw.lower().startswith(("github.com/", "www.github.com/")):
+        path = raw.split("/", 1)[1]
+    else:
+        path = raw
+
+    parts = [part for part in path.strip("/").split("/") if part]
+    if len(parts) < 2:
+        raise ValueError("Enter a repository such as owner/repository.")
+
+    owner = parts[0]
+    repo = parts[1]
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    if not REPO_PART_PATTERN.fullmatch(owner) or not REPO_PART_PATTERN.fullmatch(repo):
+        raise ValueError("The repository owner or name contains unsupported characters.")
+    return f"{owner}/{repo}"
 
 
 def _gap_context(state: AgentState, index: int) -> dict:
     if index < 0 or index >= len(state.clusters):
         raise HTTPException(status_code=404, detail="Gap not found")
     cluster = state.clusters[index]
-    amount_cents = cluster.payment_amount_cents or price_for_severity(cluster.severity)
     source_issues = [
         issue for issue in state.issues if issue.number in set(cluster.issue_numbers)
     ]
+    source_pull_requests = [
+        pull_request
+        for pull_request in state.pull_requests
+        if pull_request.number in set(cluster.pr_numbers)
+    ]
+    approved_document = get_approved_document_for_gap(state.run_id, index)
+    documentation_change = None
+    if approved_document:
+        cluster.approved_document_slug = approved_document.slug
+        documentation_change = get_documentation_change(approved_document.slug)
     return {
         "run_id": state.run_id,
         "repo": state.repo,
         "index": index,
         "cluster": cluster,
-        "amount_cents": amount_cents,
-        "amount_label": format_dollars(amount_cents),
         "source_issues": source_issues,
+        "source_pull_requests": source_pull_requests,
+        "approved_document": approved_document,
+        "documentation_change": documentation_change,
     }
 
 
@@ -57,40 +118,24 @@ def _all_finding_contexts() -> list[dict]:
     return findings
 
 
-def _monetization_context() -> dict[str, str | bool | int]:
-    settings = get_settings()
-    return {
-        "stripe_configured": bool(settings.stripe_secret_key),
-        "dev_payment_bypass": settings.dev_payment_bypass,
-        "currency": settings.stripe_currency.upper(),
-        "low_price": format_dollars(settings.stripe_low_severity_cents),
-        "medium_price": format_dollars(settings.stripe_medium_severity_cents),
-        "high_price": format_dollars(settings.stripe_high_severity_cents),
-        "dashboard_url": "https://dashboard.stripe.com/test/payments",
-    }
-
-
 @app.get("/health")
-async def health() -> dict[str, str | bool]:
-    from app.tracing import tracing_enabled
-
-    return {"status": "ok", "datadog_tracing": tracing_enabled()}
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request,
-        "index.html",
-        {"default_repo": "DataDog/dd-trace-py"},
-    )
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/findings", response_class=HTMLResponse)
 async def findings_index(request: Request) -> HTMLResponse:
     findings = _all_finding_contexts()
     findings.sort(
-        key=lambda item: (item["cluster"].published_url is not None, item["run_id"]),
+        key=lambda item: (
+            item["cluster"].approved_document_slug is not None,
+            item["run_id"],
+        ),
         reverse=True,
     )
     return templates.TemplateResponse(
@@ -100,19 +145,11 @@ async def findings_index(request: Request) -> HTMLResponse:
     )
 
 
-@app.get("/monetization", response_class=HTMLResponse)
-async def monetization_page(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request,
-        "monetization.html",
-        _monetization_context(),
-    )
-
-
 @app.post("/runs")
 async def create_run_api(request: RunRequest) -> dict[str, str]:
     state = AgentState(repo=request.repo, dry_run=request.dry_run)
     RUNS[state.run_id] = state
+    save_run(state)
     asyncio.create_task(run_agent(request, state=state))
     return {"run_id": state.run_id}
 
@@ -121,17 +158,27 @@ async def create_run_api(request: RunRequest) -> dict[str, str]:
 async def create_run_web(
     request: Request,
     repo: str = Form(...),
-    docs_url: str | None = Form("https://ddtrace.readthedocs.io/"),
+    docs_url: str | None = Form(None),
     limit: int = Form(50),
 ) -> HTMLResponse:
+    try:
+        normalized_repo = _normalize_repo(repo)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request,
+            "_partials/run_error.html",
+            {"message": str(exc)},
+        )
+
     run_request = RunRequest(
-        repo=repo,
+        repo=normalized_repo,
         docs_url=docs_url,
         limit=limit,
         dry_run=False,
     )
     state = AgentState(repo=run_request.repo, dry_run=run_request.dry_run)
     RUNS[state.run_id] = state
+    save_run(state)
     asyncio.create_task(run_agent(run_request, state=state))
     return templates.TemplateResponse(
         request,
@@ -142,7 +189,7 @@ async def create_run_web(
 
 @app.get("/runs/{run_id}", response_model=RunResponse)
 async def get_run(run_id: str) -> RunResponse:
-    state = RUNS.get(run_id)
+    state = _get_run_state(run_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return RunResponse(
@@ -151,6 +198,7 @@ async def get_run(run_id: str) -> RunResponse:
         repo=state.repo,
         dry_run=state.dry_run,
         issues_scraped=len(state.issues),
+        pull_requests_scraped=len(state.pull_requests),
         clusters_found=len(state.clusters),
         docs_sources=state.docs_sources,
         top_gaps=state.clusters,
@@ -161,7 +209,7 @@ async def get_run(run_id: str) -> RunResponse:
 
 @app.get("/runs/{run_id}/gaps/{index}", response_class=HTMLResponse)
 async def finding_page(request: Request, run_id: str, index: int) -> HTMLResponse:
-    state = RUNS.get(run_id)
+    state = _get_run_state(run_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return templates.TemplateResponse(
@@ -184,77 +232,54 @@ async def stream_events(run_id: str) -> EventSourceResponse:
     return EventSourceResponse(event_generator())
 
 
-async def _publish_gap(request: Request, run_id: str, index: int) -> HTMLResponse:
-    state = RUNS.get(run_id)
+@app.post("/runs/{run_id}/gaps/{index}/approve")
+async def approve_gap(
+    run_id: str,
+    index: int,
+    markdown_source: str = Form(..., alias="markdown"),
+) -> RedirectResponse:
+    state = _get_run_state(run_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Run not found")
     if index < 0 or index >= len(state.clusters):
         raise HTTPException(status_code=404, detail="Gap not found")
+    if not markdown_source.strip():
+        raise HTTPException(status_code=422, detail="The approved document cannot be empty")
 
     cluster = state.clusters[index]
-    if cluster.review_status != "approved":
-        raise HTTPException(status_code=409, detail="Approve the Senso document before publishing.")
-    publish_result = await publish_citeable(
-        run_id=run_id,
-        repo=state.repo,
-        cluster=cluster,
-        dry_run=state.dry_run,
-    )
-    url = publish_result.get("url") or ""
-    cluster.published_url = url
-    cluster.review_status = "published" if url else "approved"
-    cluster.senso_content_id = publish_result.get("content_id")
-    cluster.senso_version_id = publish_result.get("version_id")
-    if not url:
-        return templates.TemplateResponse(
-            request,
-            "_partials/publish_preview.html",
-            {"reason": publish_result.get("reason") or "No public Cited.md URL was created."},
-        )
-    events.publish(
-        run_id,
-        {
-            "type": "gap_published",
-            "index": index,
-            "url": url,
-            "sponsor": "senso",
-        },
-    )
-    return templates.TemplateResponse(
-        request,
-        "_partials/finding_actions.html",
-        _gap_context(state, index),
-    )
-
-
-@app.post("/runs/{run_id}/gaps/{index}/checkout")
-async def create_gap_checkout(run_id: str, index: int) -> Response:
-    state = RUNS.get(run_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-    if index < 0 or index >= len(state.clusters):
-        raise HTTPException(status_code=404, detail="Gap not found")
-
-    cluster = state.clusters[index]
-    checkout_url = create_checkout_session(
+    source_issues = [
+        issue for issue in state.issues if issue.number in set(cluster.issue_numbers)
+    ]
+    source_pull_requests = [
+        pull_request
+        for pull_request in state.pull_requests
+        if pull_request.number in set(cluster.pr_numbers)
+    ]
+    document = save_approved_document(
         run_id=run_id,
         gap_index=index,
+        repo=state.repo,
         title=cluster.draft_title or cluster.name,
-        severity=cluster.severity,
+        summary=cluster.draft_summary or cluster.summary,
+        markdown_source=markdown_source.strip(),
+        source_issues=[
+            {"number": issue.number, "title": issue.title, "url": str(issue.url)}
+            for issue in source_issues
+        ]
+        + [
+            {
+                "number": pull_request.number,
+                "title": pull_request.title,
+                "url": str(pull_request.url),
+                "kind": "pull_request",
+            }
+            for pull_request in source_pull_requests
+        ],
     )
-    return Response(status_code=204, headers={"HX-Redirect": checkout_url})
-
-
-@app.post("/runs/{run_id}/gaps/{index}/approve", response_class=HTMLResponse)
-async def approve_gap(request: Request, run_id: str, index: int) -> HTMLResponse:
-    state = RUNS.get(run_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-    if index < 0 or index >= len(state.clusters):
-        raise HTTPException(status_code=404, detail="Gap not found")
-
-    cluster = state.clusters[index]
+    cluster.draft_markdown = document.markdown
     cluster.review_status = "approved"
+    cluster.approved_document_slug = document.slug
+    save_run(state)
     events.publish(
         run_id,
         {
@@ -263,72 +288,147 @@ async def approve_gap(request: Request, run_id: str, index: int) -> HTMLResponse
             "title": cluster.draft_title or cluster.name,
         },
     )
-    return templates.TemplateResponse(
-        request,
-        "_partials/finding_actions.html",
-        _gap_context(state, index),
+    return RedirectResponse(
+        url=f"/docs/{document.slug}",
+        status_code=303,
     )
 
 
-@app.get("/payments/success", response_class=HTMLResponse)
-async def payment_success(request: Request, session_id: str) -> HTMLResponse:
-    receipt, run_id, index = verify_checkout_session(session_id)
-    state = RUNS.get(run_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-    if index < 0 or index >= len(state.clusters):
-        raise HTTPException(status_code=404, detail="Gap not found")
-
-    cluster = state.clusters[index]
-    cluster.payment_status = "paid"
-    cluster.payment_amount_cents = receipt.amount_cents
-    cluster.payment_id = receipt.payment_id
-    cluster.review_status = "approved"
-    events.publish(
-        run_id,
-        {
-            "type": "payment_received",
-            "index": index,
-            "amount_cents": receipt.amount_cents,
-            "payment_id": receipt.payment_id,
-        },
+@app.get("/docs/{slug}/download")
+async def download_approved_document(slug: str) -> Response:
+    document = get_approved_document(slug)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Approved document not found")
+    filename = f"{slug}.md"
+    return Response(
+        content=document.markdown,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-    publish_response = await _publish_gap(request, run_id, index)
+
+
+@app.get("/docs/{slug}", response_class=HTMLResponse)
+async def approved_document_page(request: Request, slug: str) -> HTMLResponse:
+    document = get_approved_document(slug)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Approved document not found")
     return templates.TemplateResponse(
         request,
-        "_partials/payment_success.html",
+        "document.html",
         {
-            "run_id": run_id,
-            "index": index,
-            "cluster": cluster,
-            "amount_cents": receipt.amount_cents,
-            "amount_label": format_dollars(receipt.amount_cents),
-            "payment_id": receipt.payment_id,
-            "publish_html": publish_response.body.decode(),
+            "document": document,
+            "rendered_markdown": render_markdown(
+                document_body_markdown(document.markdown)
+            ),
+            "documentation_change": get_documentation_change(slug),
         },
     )
 
 
-@app.post("/runs/{run_id}/gaps/{index}/publish", response_class=HTMLResponse)
-async def publish_gap(request: Request, run_id: str, index: int) -> HTMLResponse:
-    state = RUNS.get(run_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-    if index < 0 or index >= len(state.clusters):
-        raise HTTPException(status_code=404, detail="Gap not found")
+@app.post("/docs/{slug}/pull-request/preview", response_class=HTMLResponse)
+async def preview_documentation_pull_request(
+    request: Request,
+    slug: str,
+    target_repo: str = Form(...),
+    file_path: str | None = Form(None),
+) -> HTMLResponse:
+    document = get_approved_document(slug)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Approved document not found")
+    try:
+        change = await prepare_documentation_change(
+            document,
+            target_repo=target_repo,
+            requested_path=file_path,
+        )
+        error = None
+    except DocumentationPullRequestError as exc:
+        change = get_documentation_change(slug)
+        error = str(exc)
+    return templates.TemplateResponse(
+        request,
+        "documentation_pr.html",
+        {
+            "document": document,
+            "change": change,
+            "error": error,
+            "write_enabled": write_enabled(),
+        },
+    )
 
-    return await _publish_gap(request, run_id, index)
+
+@app.get("/docs/{slug}/pull-request", response_class=HTMLResponse)
+async def documentation_pull_request_page(
+    request: Request, slug: str
+) -> HTMLResponse:
+    document = get_approved_document(slug)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Approved document not found")
+    change = get_documentation_change(slug)
+    if change is None:
+        return RedirectResponse(url=f"/docs/{slug}", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "documentation_pr.html",
+        {
+            "document": document,
+            "change": change,
+            "error": change.error,
+            "write_enabled": write_enabled(),
+        },
+    )
+
+
+@app.post("/docs/{slug}/pull-request/create", response_class=HTMLResponse)
+async def create_documentation_pull_request_route(
+    request: Request, slug: str
+) -> HTMLResponse:
+    document = get_approved_document(slug)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Approved document not found")
+    change = get_documentation_change(slug)
+    if change is None:
+        raise HTTPException(status_code=409, detail="Preview the documentation change first")
+    try:
+        change = await create_documentation_pull_request(document, change)
+        error = None
+    except DocumentationPullRequestError as exc:
+        change = get_documentation_change(slug) or change
+        error = str(exc)
+    return templates.TemplateResponse(
+        request,
+        "documentation_pr.html",
+        {
+            "document": document,
+            "change": change,
+            "error": error,
+            "write_enabled": write_enabled(),
+        },
+    )
+
+
+@app.get("/docs/{slug}/pull-request/patch")
+async def download_documentation_patch(slug: str) -> Response:
+    change = get_documentation_change(slug)
+    if change is None:
+        raise HTTPException(status_code=404, detail="Documentation change not found")
+    return Response(
+        content=change.patch,
+        media_type="text/x-diff; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{slug}.patch"'},
+    )
 
 
 @app.post("/runs/{run_id}/gaps/{index}/reject", response_class=HTMLResponse)
 async def reject_gap(request: Request, run_id: str, index: int) -> HTMLResponse:
-    state = RUNS.get(run_id)
+    state = _get_run_state(run_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Run not found")
     if index < 0 or index >= len(state.clusters):
         raise HTTPException(status_code=404, detail="Gap not found")
 
     state.clusters[index].review_status = "rejected"
+    save_run(state)
     events.publish(
         run_id,
         {"type": "gap_rejected", "index": index},
@@ -338,30 +438,6 @@ async def reject_gap(request: Request, run_id: str, index: int) -> HTMLResponse:
         "_partials/rejected.html",
         {},
     )
-
-
-@app.post("/runs/{run_id}/api/gaps/{index}/publish")
-async def publish_gap_json(run_id: str, index: int) -> dict[str, str]:
-    state = RUNS.get(run_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-    if index < 0 or index >= len(state.clusters):
-        raise HTTPException(status_code=404, detail="Gap not found")
-    cluster = state.clusters[index]
-    if cluster.review_status != "approved":
-        raise HTTPException(status_code=409, detail="Approve the Senso document before publishing.")
-    publish_result = await publish_citeable(
-        run_id=run_id,
-        repo=state.repo,
-        cluster=cluster,
-        dry_run=state.dry_run,
-    )
-    url = publish_result.get("url") or ""
-    cluster.published_url = url
-    cluster.review_status = "published" if url else "approved"
-    cluster.senso_content_id = publish_result.get("content_id")
-    cluster.senso_version_id = publish_result.get("version_id")
-    return {"url": url, "status": publish_result.get("status") or "unknown"}
 
 
 @app.get("/runs/{run_id}/events.json")

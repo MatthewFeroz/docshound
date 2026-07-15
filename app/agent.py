@@ -1,12 +1,14 @@
 from app import events
 from app.langgraph_agent import graph
-from app.state import RUNS, AgentState, GapCluster, Issue, RunRequest
+from app.run_store import save_run
+from app.state import RUNS, AgentState, GapCluster, Issue, PullRequest, RunRequest
 from app.tracing import traced_run
 
 
 async def run_agent(request: RunRequest, state: AgentState | None = None) -> AgentState:
     state = state or AgentState(repo=request.repo, dry_run=request.dry_run)
     RUNS[state.run_id] = state
+    save_run(state)
 
     events.publish(
         state.run_id,
@@ -23,6 +25,7 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
                     "limit": request.limit,
                     "dry_run": request.dry_run,
                     "issues": [],
+                    "pull_requests": [],
                     "clusters": [],
                     "docs_sources": [],
                     "errors": [],
@@ -38,7 +41,7 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
                         "repo": request.repo,
                         "dry_run": request.dry_run,
                     },
-                    "tags": ["docs-gap-agent", request.repo],
+                    "tags": ["docshound", request.repo],
                 },
             )
     except Exception as exc:
@@ -49,9 +52,14 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
             {"type": "run_completed", "status": "failed", "errors": state.errors},
         )
         events.close(state.run_id)
+        save_run(state)
         return state
 
     state.issues = [Issue.model_validate(issue) for issue in result.get("issues", [])]
+    state.pull_requests = [
+        PullRequest.model_validate(pull_request)
+        for pull_request in result.get("pull_requests", [])
+    ]
     state.clusters = [
         GapCluster.model_validate(cluster) for cluster in result.get("clusters", [])
     ]
@@ -70,10 +78,12 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
             "type": "run_completed",
             "status": state.status,
             "issues_scraped": len(state.issues),
+            "pull_requests_scraped": len(state.pull_requests),
             "clusters_found": len(state.clusters),
             "docs_sources_found": len(state.docs_sources),
             "errors": state.errors,
         },
     )
     events.close(state.run_id)
+    save_run(state)
     return state

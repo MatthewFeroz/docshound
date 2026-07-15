@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Documentation PR · {{ document.title }} · DocsHound</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% include "_partials/favicon.html" %}
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="document-shell">
+  <header class="document-toolbar">
+    <a class="document-brand" href="/">
+      <img src="{{ docshound_icon }}" alt="">
+      <span>DocsHound</span>
+    </a>
+    <div class="document-actions">
+      <a class="document-action" href="/docs/{{ document.slug }}">Back to document</a>
+      {% if change %}<a class="document-action" href="/docs/{{ document.slug }}/pull-request/patch">Download patch</a>{% endif %}
+    </div>
+  </header>
+
+  <main class="pr-page">
+    <article class="pr-review-card">
+      <div class="document-meta">
+        <span>Documentation change</span>
+        {% if change %}<span>{{ change.target_repo }}</span><span>{{ change.status|replace('_', ' ') }}</span>{% endif %}
+      </div>
+      <h1>Review the repository change</h1>
+      <p class="document-summary">Confirm where the approved document belongs, inspect the patch, and create a normal documentation pull request.</p>
+
+      {% if error %}
+      <div class="pr-alert" role="alert"><strong>Could not complete the request.</strong><span>{{ error }}</span></div>
+      {% endif %}
+
+      <form class="pr-target-form" action="/docs/{{ document.slug }}/pull-request/preview" method="post">
+        <label>
+          Documentation repository
+          <input name="target_repo" value="{{ change.target_repo if change else document.repo }}" required pattern="[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+">
+        </label>
+        <label>
+          File path
+          <input name="file_path" value="{{ change.file_path if change else '' }}" placeholder="Auto-detect from the repository">
+        </label>
+        <button class="document-action" type="submit">Refresh preview</button>
+      </form>
+
+      {% if change %}
+      <section class="pr-target-summary">
+        <div><span>Base branch</span><strong>{{ change.base_branch }}</strong></div>
+        <div><span>New branch</span><strong>{{ change.branch_name }}</strong></div>
+        <div><span>Document path</span><strong>{{ change.file_path }}</strong></div>
+        <div><span>Detected from</span><strong>{{ change.detected_by }}</strong></div>
+      </section>
+
+      <section class="pr-patch-section">
+        <div class="pr-section-head">
+          <div>
+            <span>Exact patch</span>
+            <h2>{{ change.file_path }}</h2>
+          </div>
+          <span class="pr-format-pill">{{ change.file_format|upper }}</span>
+        </div>
+        <pre class="pr-patch"><code>{{ change.patch }}</code></pre>
+      </section>
+
+      <footer class="pr-create-footer">
+        <div>
+          {% if change.status == "created" %}
+          <strong>Pull request #{{ change.pr_number }} is ready</strong>
+          <span>Review it normally, then merge when the documentation is correct.</span>
+          {% elif write_enabled %}
+          <strong>Ready to create the pull request</strong>
+          <span>This creates one branch, one documentation commit, and one pull request.</span>
+          {% else %}
+          <strong>Preview mode</strong>
+          <span>Connect repository write access to enable the final create step.</span>
+          {% endif %}
+        </div>
+        {% if change.status == "created" %}
+        <a class="document-primary-action" href="{{ change.pr_url }}" target="_blank" rel="noopener">Open pull request</a>
+        {% else %}
+        <form action="/docs/{{ document.slug }}/pull-request/create" method="post">
+          <button class="document-primary-action" type="submit" {% if not write_enabled %}disabled aria-disabled="true"{% endif %}>Create documentation PR</button>
+        </form>
+        {% endif %}
+      </footer>
+      {% endif %}
+    </article>
+  </main>
+</body>
+</html>

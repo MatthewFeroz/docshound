@@ -2,41 +2,11 @@ from typing import Any, Iterable
 
 from fastapi.templating import Jinja2Templates
 
-from app.payments import format_dollars, price_for_severity
-
-
-_SPONSOR_ICONS = {
-    "datadog": "Datadog",
-    "nimble": "Nimble",
-    "senso": "Senso",
-    "github": "GitHub",
-    "openai": "OpenAI",
-    "gemini": "Gemini",
-    "langchain": "LangChain",
-    "clickhouse": "ClickHouse",
-    "stripe": "Stripe",
-}
-
-# (logo_path, is_wordmark) - wordmarks render without the text label.
-_SPONSOR_LOGOS: dict[str, tuple[str, bool]] = {
-    "datadog":    ("/static/logos/datadog.svg",    False),
-    "nimble":     ("/static/logos/nimble.svg",     True),
-    "senso":      ("/static/logos/senso.png",      True),
-    "github":     ("/static/logos/github.svg",     False),
-    "openai":     ("/static/logos/openai.svg",     False),
-    "gemini":     ("/static/logos/gemini.svg",     False),
-    "langchain":  ("/static/logos/langchain.svg",  False),
-    "clickhouse": ("/static/logos/clickhouse.svg", False),
-    "stripe":     ("/static/logos/stripe.svg",     False),
-}
-
 _TOOL_LABELS = {
     "research_repo": "research_repo",
     "cluster_issues": "cluster_issues",
     "store_results": "store_results",
-    "publish_citeable": "publish_citeable",
     "search_official_docs": "search_official_docs",
-    "nimble_search": "nimble_search",
 }
 
 
@@ -47,46 +17,6 @@ def _render(templates: Jinja2Templates, name: str, ctx: dict[str, Any]) -> str:
 
 def _timeline(templates: Jinja2Templates, **ctx: Any) -> str:
     return _render(templates, "_partials/timeline_event.html", ctx)
-
-
-def _oob_dot(sponsor: str, accent_class: str | None = None) -> str:
-    """Render the OOB swap markup that lights up a tool pill in the Built-with bar.
-
-    The optional ``accent_class`` is preserved for backwards compatibility with
-    earlier call sites but has no effect now that per-brand glow colors are
-    handled by CSS via the ``#dot-<sponsor>`` selector.
-    """
-    label = _SPONSOR_ICONS.get(sponsor, sponsor.title())
-    logo, is_wordmark = _SPONSOR_LOGOS.get(
-        sponsor, (f"/static/logos/{sponsor}.svg", False)
-    )
-    extra = f" {accent_class}" if accent_class else ""
-    if is_wordmark:
-        inner = f'<img class="wordmark" src="{logo}" alt="{label}">'
-    else:
-        inner = (
-            f'<img src="{logo}" alt="{label}">'
-            f'<span class="tool-pill-name">{label}</span>'
-        )
-    return (
-        f'<span class="tool-pill lit{extra}" id="dot-{sponsor}" '
-        f'title="{label}" hx-swap-oob="outerHTML">{inner}</span>'
-    )
-
-
-def _oob_stats(
-    issues: int,
-    gaps: int,
-    duration_ms: float | None = None,
-    extra: str = "",
-) -> str:
-    parts = [f"<strong>{issues}</strong> issues", f"<strong>{gaps}</strong> gaps"]
-    if duration_ms is not None:
-        parts.append(f"{duration_ms / 1000:.1f}s")
-    if extra:
-        parts.append(extra)
-    body = " · ".join(parts)
-    return f'<div id="stats" class="stats" hx-swap-oob="outerHTML">{body}</div>'
 
 
 def _oob_gaps_count(count: int) -> str:
@@ -121,7 +51,6 @@ def render_events(
                 meta=None,
             ),
         }
-        yield {"event": "oob", "data": _oob_dot("datadog", "lit-datadog")}
         return
 
     if etype == "agent_decision":
@@ -138,8 +67,6 @@ def render_events(
                 meta=None,
             ),
         }
-        if "fallback" not in reason.lower() and "not set" not in reason.lower():
-            yield {"event": "oob", "data": _oob_dot("openai")}
         return
 
     if etype == "tool_start":
@@ -156,15 +83,6 @@ def render_events(
                 meta=None,
             ),
         }
-        if sponsor:
-            accent = (
-                "lit-senso" if sponsor == "senso"
-                else "lit-datadog" if sponsor == "datadog"
-                else None
-            )
-            yield {"event": "oob", "data": _oob_dot(sponsor, accent)}
-        if event.get("traced"):
-            yield {"event": "oob", "data": _oob_dot("datadog", "lit-datadog")}
         return
 
     if etype == "tool_end":
@@ -210,19 +128,30 @@ def render_events(
                 meta=None,
             ),
         }
-        yield {"event": "oob", "data": _oob_stats(issues=count, gaps=0)}
+        return
+
+    if etype == "pull_requests_fetched":
+        count = event.get("count", 0)
+        yield {
+            "event": "timeline",
+            "data": _timeline(
+                templates,
+                kind="success",
+                icon="✓",
+                label=f"{count} merged pull requests fetched",
+                detail=None,
+                meta=None,
+            ),
+        }
         return
 
     if etype == "gap_found":
         cluster = event["cluster"]
         index = event["index"]
-        amount_cents = price_for_severity(cluster["severity"])
         ctx = {
             "cluster": cluster,
             "index": index,
             "run_id": run_id,
-            "amount_cents": amount_cents,
-            "amount_label": format_dollars(amount_cents),
         }
         yield {
             "event": "gap_card",
@@ -247,24 +176,6 @@ def render_events(
                 meta=None,
             ),
         }
-        yield {"event": "oob", "data": _oob_dot("nimble")}
-        return
-
-    if etype == "payment_received":
-        amount_cents = event.get("amount_cents", 0)
-        payment_id = event.get("payment_id", "")
-        yield {
-            "event": "timeline",
-            "data": _timeline(
-                templates,
-                kind="success",
-                icon="$",
-                label=f"agent workflow paid · {format_dollars(amount_cents)}",
-                detail=payment_id,
-                meta=None,
-            ),
-        }
-        yield {"event": "oob", "data": _oob_dot("stripe")}
         return
 
     if etype == "gap_approved":
@@ -274,28 +185,11 @@ def render_events(
                 templates,
                 kind="success",
                 icon="✓",
-                label="Senso document approved",
+                label="Document approved",
                 detail=event.get("title", ""),
                 meta=None,
             ),
         }
-        yield {"event": "oob", "data": _oob_dot("senso", "lit-senso")}
-        return
-
-    if etype == "gap_published":
-        # already handled via direct response from /publish endpoint
-        yield {
-            "event": "timeline",
-            "data": _timeline(
-                templates,
-                kind="success",
-                icon="↗",
-                label="Senso document published to portal",
-                detail=event.get("url", ""),
-                meta=None,
-            ),
-        }
-        yield {"event": "oob", "data": _oob_dot("senso", "lit-senso")}
         return
 
     if etype == "run_completed":
@@ -311,14 +205,6 @@ def render_events(
                 label=f"run {status}",
                 detail=None,
                 meta=None,
-            ),
-        }
-        yield {
-            "event": "oob",
-            "data": _oob_stats(
-                issues=event.get("issues_scraped", 0),
-                gaps=event.get("clusters_found", 0),
-                extra=f"status: {status}",
             ),
         }
         return

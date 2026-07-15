@@ -6,11 +6,10 @@ from pydantic import BaseModel, Field
 
 from app import events
 from app.config import get_settings
-from app.state import DocSource, GapCluster, Issue
-from app.tools.clickhouse import store_run
+from app.state import DocSource, GapCluster, Issue, PullRequest
 from app.tools.cluster import attach_review_drafts, cluster_issues
 from app.tools.docs import search_official_docs
-from app.tools.github import research_repo
+from app.tools.github import research_pull_requests, research_repo
 from app.tracing import run_traced
 
 
@@ -21,13 +20,14 @@ class AgentDecision(BaseModel):
     reason: str = Field(description="Short reason for the selected action.")
 
 
-class DocsGapGraphState(TypedDict, total=False):
+class DocsHoundGraphState(TypedDict, total=False):
     run_id: str
     repo: str
     docs_url: str | None
     limit: int
     dry_run: bool
     issues: list[dict]
+    pull_requests: list[dict]
     clusters: list[dict]
     docs_sources: list[dict]
     errors: list[str]
@@ -40,7 +40,7 @@ class DocsGapGraphState(TypedDict, total=False):
     stored: bool
 
 
-async def llm_decide(state: DocsGapGraphState) -> DocsGapGraphState:
+async def llm_decide(state: DocsHoundGraphState) -> DocsHoundGraphState:
     fallback_action = _safe_next_action(state)
     settings = get_settings()
     if not settings.openai_api_key:
@@ -50,17 +50,17 @@ async def llm_decide(state: DocsGapGraphState) -> DocsGapGraphState:
         return state
 
     prompt = f"""
-You are a ReAct-style documentation gap agent.
+You are DocsHound, a ReAct-style documentation gap agent.
 
 Goal:
-Find recurring GitHub issue questions that indicate missing documentation,
-cluster them, and store the audit trail.
+Find documentation gaps in issues and shipped changes in merged pull requests,
+then preserve the audit trail for review.
 
 Available actions:
-- research: fetch recent GitHub issues for the repo
-- analyze: cluster fetched issues into recurring documentation gaps
+- research: fetch recent GitHub issues and merged pull requests for the repo
+- analyze: identify recurring gaps and shipped changes that need documentation
 - search_docs: inspect configured official docs for citation evidence
-- store: write the run and discovered gaps to ClickHouse
+- store: finalize the run and its audit trail
 
 Rules:
 - Research must happen before analysis.
@@ -77,6 +77,7 @@ Current state:
 - docs_searched: {state.get("docs_searched", False)}
 - stored: {state.get("stored", False)}
 - issues_count: {len(state.get("issues", []))}
+- merged_pull_requests_count: {len(state.get("pull_requests", []))}
 - clusters_count: {len(state.get("clusters", []))}
 - docs_sources_count: {len(state.get("docs_sources", []))}
 - errors_count: {len(state.get("errors", []))}
@@ -108,11 +109,11 @@ Choose the next action.
 
 
 def _safe_next_action(
-    state: DocsGapGraphState,
+    state: DocsHoundGraphState,
 ) -> Literal["research", "analyze", "search_docs", "store"]:
     if not state.get("researched") and not state.get("errors"):
         return "research"
-    if state.get("issues") and not state.get("analyzed"):
+    if (state.get("issues") or state.get("pull_requests")) and not state.get("analyzed"):
         return "analyze"
     if state.get("analyzed") and not state.get("docs_searched"):
         return "search_docs"
@@ -120,7 +121,7 @@ def _safe_next_action(
 
 
 def _guard_action(
-    state: DocsGapGraphState,
+    state: DocsHoundGraphState,
     action: Literal["research", "analyze", "search_docs", "store"],
 ) -> Literal["research", "analyze", "search_docs", "store"]:
     safe = _safe_next_action(state)
@@ -131,11 +132,12 @@ def _guard_action(
     return safe
 
 
-def _record_decision(state: DocsGapGraphState) -> None:
+def _record_decision(state: DocsHoundGraphState) -> None:
     decision = {
         "action": state.get("next_action"),
         "reason": state.get("decision_reason", ""),
         "issues_count": len(state.get("issues", [])),
+        "pull_requests_count": len(state.get("pull_requests", [])),
         "clusters_count": len(state.get("clusters", [])),
         "docs_sources_count": len(state.get("docs_sources", [])),
         "errors_count": len(state.get("errors", [])),
@@ -145,12 +147,12 @@ def _record_decision(state: DocsGapGraphState) -> None:
 
 
 def route(
-    state: DocsGapGraphState,
+    state: DocsHoundGraphState,
 ) -> Literal["research", "analyze", "search_docs", "store"]:
     return state["next_action"]  # type: ignore[return-value]
 
 
-async def research(state: DocsGapGraphState) -> DocsGapGraphState:
+async def research(state: DocsHoundGraphState) -> DocsHoundGraphState:
     try:
         issues = await run_traced(
             "research_repo",
@@ -165,6 +167,22 @@ async def research(state: DocsGapGraphState) -> DocsGapGraphState:
             state["run_id"],
             {"type": "issues_fetched", "count": len(issues)},
         )
+        pull_requests = await run_traced(
+            "research_pull_requests",
+            state["run_id"],
+            state["repo"],
+            research_pull_requests,
+            state["repo"],
+            state.get("limit", 50),
+        )
+        state["pull_requests"] = [
+            pull_request.model_dump(mode="json")
+            for pull_request in pull_requests
+        ]
+        events.publish(
+            state["run_id"],
+            {"type": "pull_requests_fetched", "count": len(pull_requests)},
+        )
     except Exception as exc:
         state.setdefault("errors", []).append(str(exc))
     finally:
@@ -172,17 +190,22 @@ async def research(state: DocsGapGraphState) -> DocsGapGraphState:
     return state
 
 
-async def analyze(state: DocsGapGraphState) -> DocsGapGraphState:
+async def analyze(state: DocsHoundGraphState) -> DocsHoundGraphState:
     try:
         issues = [Issue.model_validate(issue) for issue in state.get("issues", [])]
+        pull_requests = [
+            PullRequest.model_validate(pull_request)
+            for pull_request in state.get("pull_requests", [])
+        ]
         clusters = await run_traced(
             "cluster_issues",
             state["run_id"],
             state["repo"],
             cluster_issues,
             issues,
+            pull_requests,
         )
-        clusters = attach_review_drafts(clusters, issues)
+        clusters = attach_review_drafts(clusters, issues, pull_requests)
         cluster_dicts = [cluster.model_dump(mode="json") for cluster in clusters]
         state["clusters"] = cluster_dicts
         for index, cluster in enumerate(cluster_dicts):
@@ -197,7 +220,7 @@ async def analyze(state: DocsGapGraphState) -> DocsGapGraphState:
     return state
 
 
-async def search_docs(state: DocsGapGraphState) -> DocsGapGraphState:
+async def search_docs(state: DocsHoundGraphState) -> DocsHoundGraphState:
     try:
         clusters = [
             GapCluster.model_validate(cluster)
@@ -229,39 +252,12 @@ async def search_docs(state: DocsGapGraphState) -> DocsGapGraphState:
     return state
 
 
-async def store(state: DocsGapGraphState) -> DocsGapGraphState:
-    from app.state import AgentState
-
-    agent_state = AgentState(
-        run_id=state["run_id"],
-        repo=state["repo"],
-        dry_run=state.get("dry_run", True),
-        issues=[Issue.model_validate(issue) for issue in state.get("issues", [])],
-        clusters=[
-            GapCluster.model_validate(cluster) for cluster in state.get("clusters", [])
-        ],
-        docs_sources=[
-            DocSource.model_validate(source)
-            for source in state.get("docs_sources", [])
-        ],
-        errors=state.get("errors", []),
-    )
-    try:
-        await run_traced(
-            "store_results",
-            state["run_id"],
-            state["repo"],
-            store_run,
-            agent_state,
-        )
-    except Exception as exc:
-        state.setdefault("errors", []).append(f"ClickHouse store failed: {exc}")
-    finally:
-        state["stored"] = True
+async def store(state: DocsHoundGraphState) -> DocsHoundGraphState:
+    state["stored"] = True
     return state
 
 
-builder = StateGraph(DocsGapGraphState)
+builder = StateGraph(DocsHoundGraphState)
 builder.add_node("llm_decide", llm_decide)
 builder.add_node("research", research)
 builder.add_node("analyze", analyze)

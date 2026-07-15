@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Git Shell — Mission Control</title>
+<title>DocsHound — Mission Control</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {% include "_partials/favicon.html" %}
 <link rel="stylesheet" href="/static/style.css">
@@ -11,59 +11,44 @@
 </head>
 <body hx-ext="sse">
   <header class="topbar">
-    {% with brand_tagline="GitHub issues → clustered gaps → citeable docs" %}
+    {% with brand_tagline="Repository activity → reviewed documentation" %}
       {% include "_partials/brand.html" %}
     {% endwith %}
     <div class="top-actions">
-    <a class="published-link" href="/findings">Browse findings →</a>
-    <a class="published-link" href="/monetization">Monetization</a>
-    <form class="run-form"
-          hx-post="/web/runs"
-          hx-target="#run-mount"
-          hx-swap="innerHTML"
-          hx-disabled-elt="find button">
-      <input class="repo-input" name="repo" value="{{ default_repo }}"
-             placeholder="owner/repo" autocomplete="off" required>
-      <input type="hidden" name="limit" value="50">
-      <input type="hidden" name="docs_url" value="https://ddtrace.readthedocs.io/">
-      <button type="submit" class="run-btn">
-        <span class="run-arrow">▶</span> Run agent
-      </button>
-    </form>
+      <a class="published-link" href="/findings">Browse findings →</a>
     </div>
   </header>
 
   <main id="run-mount">
     <section class="hero-v2">
-      <a class="hero-pill" href="/findings">
-        <span class="hero-pill-label">Datadog Agents Hackathon</span>
-        <span class="hero-pill-sep"></span>
-        <span class="hero-pill-action">View findings <span class="hero-pill-arrow">↗</span></span>
-      </a>
-
       <h2 class="hero-title">
-        Turn <em>GitHub issues</em><br>
+        Turn
+        <span class="source-rotator"
+              aria-label="Open issues and merged pull requests">
+          <span class="source-sizer" aria-hidden="true">merged pull requests</span>
+          <em class="source-word" style="--source-index: 0" aria-hidden="true">open issues</em>
+          <em class="source-word" style="--source-index: 1" aria-hidden="true">merged pull requests</em>
+        </span><br>
         into citeable documentation.
       </h2>
 
       <p class="hero-sub">
-        Paste any public repo. An autonomous agent scrapes recent issues,
-        clusters the recurring questions, drafts a citeable fix, and publishes
-        it to the company portal &mdash; observable in real time.
+        Paste any public repo. DocsHound reviews open issues and merged pull
+        requests, then drafts documentation for missing answers and shipped changes.
       </p>
 
       <form class="hero-cta-form"
             hx-post="/web/runs"
             hx-target="#run-mount"
-            hx-swap="innerHTML"
+            hx-swap="innerHTML show:top"
+            hx-indicator="this"
             hx-disabled-elt="find button">
-        <span class="hero-cta-prefix">github.com/</span>
-        <input class="hero-cta-input" name="repo" value="{{ default_repo }}"
-               placeholder="owner/repo" autocomplete="off" required>
+        <input class="hero-cta-input" name="repo"
+               placeholder="Paste your repo — owner/repository or URL" autocomplete="off" required>
         <input type="hidden" name="limit" value="50">
-        <input type="hidden" name="docs_url" value="https://ddtrace.readthedocs.io/">
         <button type="submit" class="hero-cta-btn">
-          Run agent <span class="hero-cta-arrow">→</span>
+          <span class="run-idle">Run agent <span class="hero-cta-arrow">→</span></span>
+          <span class="run-busy" role="status">Starting…</span>
         </button>
       </form>
 
@@ -71,19 +56,17 @@
         <span class="hero-trust-dot"></span>
         <span>Live now</span>
         <span class="hero-trust-sep">·</span>
-        <span>Real GitHub issues</span>
-        <span class="hero-trust-sep">·</span>
-        <span>Every tool call traced in Datadog</span>
+        <span>Real repository evidence</span>
       </div>
 
       <aside class="hero-floater hero-floater-left" aria-hidden="true">
         <div class="floater-card">
           <div class="floater-kicker">
             <span class="floater-sev floater-sev-high">HIGH</span>
-            <span class="floater-repo">DataDog/dd-trace-py</span>
+            <span class="floater-repo">acme/sdk-python</span>
           </div>
           <div class="floater-title">Async tracing not propagating across tasks</div>
-          <div class="floater-question">"Why are my async spans missing in Datadog?"</div>
+          <div class="floater-question">"Why are my async spans missing?"</div>
           <div class="floater-meta">12 issues clustered · 4s ago</div>
         </div>
       </aside>
@@ -91,12 +74,12 @@
       <aside class="hero-floater hero-floater-right" aria-hidden="true">
         <div class="floater-card">
           <div class="floater-kicker">
-            <span class="floater-status">PUBLISHED</span>
-            <span class="floater-repo">Portal doc</span>
+            <span class="floater-status">APPROVED</span>
+            <span class="floater-repo">Markdown document</span>
           </div>
           <div class="floater-title">Tracing async generators in 3 steps</div>
-          <div class="floater-question">cited.md/dd-trace-py/async-tracing</div>
-          <div class="floater-meta">Draft → review → live · 38s</div>
+          <div class="floater-question">Ready to copy into any documentation system</div>
+          <div class="floater-meta">Draft → review → approve</div>
         </div>
       </aside>
     </section>
@@ -105,22 +88,21 @@
       <div class="hero">
         <div class="hero-card">
           <span class="hero-eyebrow">How it works</span>
-          <h2>From <em>noisy issue queues</em> to citeable documentation.</h2>
+          <h2>From <em>repository activity</em> to citeable documentation.</h2>
           <p class="hero-lede">
-            Git Shell scrapes recent issues, clusters the recurring questions,
-            drafts a citeable fix, and publishes it to the portal — all
-            observable in real time.
+            DocsHound reviews recent issues and merged pull requests, checks the
+            existing documentation, and drafts a citeable answer for review.
           </p>
           <ul class="hero-steps">
-            <li><span class="step-num">1</span><span><strong>Scrape</strong> recent issues from any public GitHub repo</span></li>
-            <li><span class="step-num">2</span><span>An LLM router <strong>clusters</strong> them into recurring questions</span></li>
-            <li><span class="step-num">3</span><span>Persists the audit trail to <strong>ClickHouse</strong></span></li>
-            <li><span class="step-num">4</span><span>Publishes citeable answers via <strong>Senso</strong></span></li>
-            <li><span class="step-num">5</span><span>Every tool call is traced through <strong>Datadog</strong></span></li>
+            <li><span class="step-num">1</span><span><strong>Collect</strong> issues and merged pull requests from a public repository</span></li>
+            <li><span class="step-num">2</span><span><strong>Identify</strong> open gaps and shipped changes that need documentation</span></li>
+            <li><span class="step-num">3</span><span><strong>Check</strong> the existing documentation for coverage and supporting evidence</span></li>
+            <li><span class="step-num">4</span><span><strong>Draft</strong> a citeable answer for human review</span></li>
+            <li><span class="step-num">5</span><span><strong>Copy</strong> the approved Markdown into any documentation system</span></li>
           </ul>
           <p class="hero-hint">
-            Enter a repo above and hit <kbd>Run agent</kbd>. Watch the pipeline
-            light up below as each service comes online.
+            Enter a repository above and select <kbd>Run agent</kbd>. DocsHound
+            will surface the strongest documentation gaps for review.
           </p>
         </div>
 
@@ -128,50 +110,42 @@
           <div class="flow-title">Pipeline preview</div>
 
           <div class="flow-step">
-            <div class="flow-icon"><img src="/static/logos/github.svg" alt=""></div>
+            <div class="flow-icon"><span>1</span></div>
             <div class="flow-body">
-              <div class="flow-name">GitHub issues</div>
-              <div class="flow-detail">last 50 issues + comments</div>
+              <div class="flow-name">Recent issues collected</div>
+              <div class="flow-detail">questions and discussion from the selected repository</div>
             </div>
           </div>
 
           <div class="flow-step">
-            <div class="flow-icon"><img src="/static/logos/openai.svg" alt=""></div>
+            <div class="flow-icon"><span>2</span></div>
             <div class="flow-body">
-              <div class="flow-name">LLM router clusters</div>
-              <div class="flow-detail">groups recurring questions</div>
+              <div class="flow-name">Recurring questions grouped</div>
+              <div class="flow-detail">related reports become clear documentation gaps</div>
             </div>
           </div>
 
           <div class="flow-step">
-            <div class="flow-icon"><img src="/static/logos/nimble.svg" alt=""></div>
+            <div class="flow-icon"><span>3</span></div>
             <div class="flow-body">
-              <div class="flow-name">Nimble crawls docs</div>
-              <div class="flow-detail">checks the official source of truth</div>
+              <div class="flow-name">Existing documentation checked</div>
+              <div class="flow-detail">coverage and supporting evidence are reviewed</div>
             </div>
           </div>
 
           <div class="flow-step">
-            <div class="flow-icon alt-yellow"><img src="/static/logos/clickhouse.svg" alt=""></div>
+            <div class="flow-icon"><span>4</span></div>
             <div class="flow-body">
-              <div class="flow-name">ClickHouse audit</div>
-              <div class="flow-detail">every decision is queryable</div>
+              <div class="flow-name">Citeable answer drafted</div>
+              <div class="flow-detail">the proposed fix includes its source evidence</div>
             </div>
           </div>
 
           <div class="flow-step">
-            <div class="flow-icon alt-green"><img src="/static/logos/senso.png" alt=""></div>
+            <div class="flow-icon"><span>5</span></div>
             <div class="flow-body">
-              <div class="flow-name">Senso publishes</div>
-              <div class="flow-detail">citeable fix at a public URL</div>
-            </div>
-          </div>
-
-          <div class="flow-step">
-            <div class="flow-icon alt-purple"><img src="/static/logos/datadog.svg" alt=""></div>
-            <div class="flow-body">
-              <div class="flow-name">Datadog observes</div>
-              <div class="flow-detail">full trace of every tool call</div>
+              <div class="flow-name">Reviewed and published</div>
+              <div class="flow-detail">approved guidance becomes available to readers</div>
             </div>
           </div>
         </aside>
@@ -179,6 +153,5 @@
     </section>
   </main>
 
-  {% include "_partials/built_with.html" %}
 </body>
 </html>

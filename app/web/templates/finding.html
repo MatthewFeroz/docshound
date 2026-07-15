@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>{{ cluster.name }} · Git Shell</title>
+<title>{{ cluster.name }} · DocsHound</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {% include "_partials/favicon.html" %}
 <link rel="stylesheet" href="/static/style.css">
@@ -10,12 +10,11 @@
 </head>
 <body>
   <header class="topbar">
-    {% with brand_suffix="Finding", brand_tagline=repo ~ " · GitHub-backed gap · publish a Senso doc" %}
+    {% with brand_suffix="Finding", brand_tagline=repo ~ " · repository-backed documentation review" %}
       {% include "_partials/brand.html" %}
     {% endwith %}
     <nav class="topnav">
       <a class="published-link" href="/findings">Browse findings</a>
-      <a class="published-link" href="/monetization">Monetization</a>
       <a class="published-link" href="/">Run agent →</a>
     </nav>
   </header>
@@ -24,7 +23,8 @@
     <article class="finding-card sev-{{ cluster.severity }}">
       <div class="finding-kicker">
         <span class="sev-pill sev-{{ cluster.severity }}">{{ cluster.severity|upper }}</span>
-        <span>{{ source_issues|length }} source issues</span>
+        <span>{% if cluster.finding_type == "shipped_change" %}SHIPPED CHANGE{% else %}OPEN GAP{% endif %}</span>
+        <span>{{ source_issues|length + source_pull_requests|length }} sources</span>
         <span>confidence {{ '%.0f'|format(cluster.confidence * 100) }}%</span>
       </div>
 
@@ -35,15 +35,19 @@
       <section class="workflow-strip" aria-label="Finding workflow">
         <div class="workflow-step active">
           <span>1</span>
-          <strong>Review traced product issues</strong>
+          <strong>Review repository evidence</strong>
         </div>
-        <div class="workflow-step {% if cluster.review_status in ['approved', 'published'] %}active{% endif %}">
+        <div class="workflow-step active">
           <span>2</span>
-          <strong>Approve Senso doc</strong>
+          <strong>Refine the Markdown</strong>
         </div>
-        <div class="workflow-step {% if cluster.published_url %}active{% endif %}">
+        <div class="workflow-step {% if approved_document %}active{% endif %}">
           <span>3</span>
-          <strong>Publish to portal</strong>
+          <strong>Approve document</strong>
+        </div>
+        <div class="workflow-step {% if documentation_change %}active{% endif %}">
+          <span>4</span>
+          <strong>Create docs PR</strong>
         </div>
       </section>
 
@@ -51,19 +55,9 @@
         {% include "_partials/finding_actions.html" %}
       </div>
 
-      <section class="review-box finding-section">
-        <div class="review-label">Generated fix preview</div>
-        <h3>{{ cluster.draft_title or cluster.name }}</h3>
-        <p>{{ cluster.draft_summary or cluster.summary }}</p>
-        <details open>
-          <summary>Review generated markdown</summary>
-          <pre>{{ cluster.draft_markdown or cluster.summary }}</pre>
-        </details>
-      </section>
-
       <section class="finding-section">
-        <div class="review-label">Step 1</div>
-        <h3>Review traced product issues</h3>
+        <div class="review-label">Repository evidence</div>
+        <h3>Review the source material</h3>
         {% if source_issues %}
         <ul class="source-list">
           {% for issue in source_issues %}
@@ -73,13 +67,45 @@
           </li>
           {% endfor %}
         </ul>
-        {% else %}
-        <p class="finding-summary">No source issue details are available for this finding.</p>
         {% endif %}
+        {% if source_pull_requests %}
+        <ul class="source-list">
+          {% for pull_request in source_pull_requests %}
+          <li>
+            <a href="{{ pull_request.url }}" target="_blank" rel="noopener">Merged PR #{{ pull_request.number }} {{ pull_request.title }}</a>
+            <span>merged {{ pull_request.merged_at.strftime('%Y-%m-%d') }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% if not source_issues and not source_pull_requests %}
+        <p class="finding-summary">No repository source details are available for this finding.</p>
+        {% endif %}
+      </section>
+
+      <section class="review-box finding-section draft-editor-section">
+        <div class="review-label">Human review draft</div>
+        <h3>{{ cluster.draft_title or cluster.name }}</h3>
+        <p>{{ cluster.draft_summary or cluster.summary }}</p>
+        <form class="approval-form"
+              action="/runs/{{ run_id }}/gaps/{{ index }}/approve"
+              method="post">
+          <label for="markdown-editor">Edit the Markdown before approving</label>
+          <textarea id="markdown-editor"
+                    class="markdown-editor"
+                    name="markdown"
+                    spellcheck="true"
+                    required>{{ cluster.draft_markdown or cluster.summary }}</textarea>
+          <div class="approval-form-actions">
+            <span>The approved revision will be saved and opened as a standalone document.</span>
+            <button class="publish-btn" type="submit">
+              {% if approved_document %}Update and open{% else %}Approve and open{% endif %}
+            </button>
+          </div>
+        </form>
       </section>
     </article>
   </main>
 
-  {% include "_partials/built_with.html" %}
 </body>
 </html>

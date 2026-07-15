@@ -9,6 +9,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .langgraph_api/
+data/*.db
+data/*.db-shm
+data/*.db-wal
 .agents/
 .claude/
 .cursor/
