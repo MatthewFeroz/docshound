@@ -3,6 +3,8 @@ import logging
 import re
 from collections import defaultdict
 
+from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 from openai import AsyncOpenAI
 
 from app.config import get_settings
@@ -22,6 +24,51 @@ KEYWORDS = {
 }
 
 
+def _trace_analysis_inputs(inputs: dict) -> dict:
+    """Keep analysis spans useful without copying issue and PR bodies."""
+    issues = inputs.get("issues") or []
+    pull_requests = inputs.get("pull_requests") or []
+    clusters = inputs.get("clusters") or []
+    return {
+        "issue_count": len(issues),
+        "issue_numbers": [issue.number for issue in issues],
+        "pull_request_count": len(pull_requests),
+        "pull_request_numbers": [pull_request.number for pull_request in pull_requests],
+        "input_cluster_count": len(clusters),
+        "input_clusters": [
+            {
+                "name": cluster.name,
+                "issue_numbers": cluster.issue_numbers,
+                "pr_numbers": cluster.pr_numbers,
+            }
+            for cluster in clusters
+        ],
+    }
+
+
+def _trace_cluster_outputs(clusters: list[GapCluster]) -> dict:
+    return {
+        "cluster_count": len(clusters),
+        "clusters": [
+            {
+                "name": cluster.name,
+                "finding_type": cluster.finding_type,
+                "severity": cluster.severity,
+                "confidence": cluster.confidence,
+                "issue_numbers": cluster.issue_numbers,
+                "pr_numbers": cluster.pr_numbers,
+            }
+            for cluster in clusters
+        ],
+    }
+
+
+@traceable(
+    name="analyze.cluster_issues",
+    run_type="chain",
+    process_inputs=_trace_analysis_inputs,
+    process_outputs=_trace_cluster_outputs,
+)
 async def cluster_issues(
     issues: list[Issue], pull_requests: list[PullRequest] | None = None
 ) -> list[GapCluster]:
@@ -42,6 +89,12 @@ async def cluster_issues(
     )
 
 
+@traceable(
+    name="analyze.llm_cluster",
+    run_type="llm",
+    process_inputs=_trace_analysis_inputs,
+    process_outputs=_trace_cluster_outputs,
+)
 async def _cluster_with_llm(
     issues: list[Issue], pull_requests: list[PullRequest]
 ) -> list[GapCluster]:
@@ -115,6 +168,17 @@ async def _cluster_with_llm(
             },
         ],
     )
+    current_run = get_current_run_tree()
+    if current_run is not None:
+        usage = response.usage
+        current_run.add_metadata(
+            {
+                "model": settings.openai_model,
+                "input_tokens": getattr(usage, "prompt_tokens", None),
+                "output_tokens": getattr(usage, "completion_tokens", None),
+                "total_tokens": getattr(usage, "total_tokens", None),
+            }
+        )
     raw = response.choices[0].message.content or "{}"
     data = json.loads(raw)
     return [GapCluster.model_validate(item) for item in data.get("clusters", [])[:8]]
@@ -193,6 +257,12 @@ def _cluster_heuristically(
     return clusters[:8]
 
 
+@traceable(
+    name="analyze.validate_sources",
+    run_type="chain",
+    process_inputs=_trace_analysis_inputs,
+    process_outputs=_trace_cluster_outputs,
+)
 def _validate_cluster_sources(
     clusters: list[GapCluster],
     issues: list[Issue],
@@ -265,6 +335,12 @@ def _pull_request_summary(pull_request: PullRequest) -> str:
     return f"Merged pull request #{pull_request.number} shipped this change."
 
 
+@traceable(
+    name="analyze.ensure_shipped_change",
+    run_type="chain",
+    process_inputs=_trace_analysis_inputs,
+    process_outputs=_trace_cluster_outputs,
+)
 def _ensure_shipped_change(
     clusters: list[GapCluster], pull_requests: list[PullRequest]
 ) -> list[GapCluster]:
@@ -334,6 +410,12 @@ def _support_gap_candidates(issues: list[Issue]) -> list[Issue]:
     return candidates
 
 
+@traceable(
+    name="analyze.attach_review_drafts",
+    run_type="chain",
+    process_inputs=_trace_analysis_inputs,
+    process_outputs=_trace_cluster_outputs,
+)
 def attach_review_drafts(
     clusters: list[GapCluster],
     issues: list[Issue],
