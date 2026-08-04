@@ -15,3 +15,8 @@ langchain-openai
 langgraph
 langgraph-cli[inmem]
 langsmith
+openinference-instrumentation-langchain==0.1.68
+openinference-instrumentation-openai==0.1.53
+opentelemetry-exporter-otlp-proto-http>=1.37,<1.38
+opentelemetry-instrumentation>=0.58b0,<0.59
+opentelemetry-sdk>=1.37,<1.38

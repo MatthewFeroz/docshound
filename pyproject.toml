@@ -3,7 +3,13 @@ name = "docshound"
 version = "0.1.0"
 description = "DocsHound turns GitHub issues and merged pull requests into citeable documentation"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "openinference-instrumentation-langchain==0.1.68",
+    "openinference-instrumentation-openai==0.1.53",
+    "opentelemetry-exporter-otlp-proto-http>=1.37,<1.38",
+    "opentelemetry-instrumentation>=0.58b0,<0.59",
+    "opentelemetry-sdk>=1.37,<1.38",
+]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
