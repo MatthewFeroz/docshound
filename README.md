@@ -58,6 +58,26 @@ cp .env.example .env
 ./run.sh
 ```
 
+### OpenInference tracing
+
+Docshound can export OpenInference-compatible traces over OTLP/HTTP to Phoenix,
+Arize AX, or another OpenTelemetry collector. Set either the signal-specific
+endpoint:
+
+```bash
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:6006/v1/traces
+```
+
+or the standard base endpoint (Docshound appends `/v1/traces`):
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:6006
+```
+
+Tracing remains disabled when neither variable is set. Telemetry-owned names and
+values are lower case, except for `openinference.span.kind` values such as `LLM`,
+`CHAIN`, and `TOOL`, which the OpenInference specification requires in upper case.
+
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 You can also start the server directly:
