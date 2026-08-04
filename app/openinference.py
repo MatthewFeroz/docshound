@@ -12,7 +12,6 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-
 SERVICE_NAME = "docshound"
 OPENINFERENCE_SPAN_KIND = SpanAttributes.OPENINFERENCE_SPAN_KIND
 OPENINFERENCE_CHAIN_KIND = OpenInferenceSpanKindValues.CHAIN.value

@@ -6,6 +6,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
+from opentelemetry.trace import StatusCode
 
 from app.openinference import (
     OPENINFERENCE_CHAIN_KIND,
@@ -84,6 +85,27 @@ class OpenInferenceConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(exported[0].attributes["tool.name"], "research_repo")
         self.assertEqual(exported[0].attributes["session.id"], "run-123")
+
+    def test_tool_span_records_failures(self) -> None:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(LowercaseSpanNameProcessor())
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("docshound.test")
+
+        with (
+            patch("app.tracing.trace_api.get_tracer", return_value=tracer),
+            patch("app.tracing.events.publish"),
+            self.assertRaisesRegex(RuntimeError, "tool failed"),
+            traced_tool("Search_Docs", "run-123", "acme/product"),
+        ):
+            raise RuntimeError("tool failed")
+
+        exported = exporter.get_finished_spans()
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(exported[0].name, "search_docs")
+        self.assertEqual(exported[0].status.status_code, StatusCode.ERROR)
+        self.assertEqual(len(exported[0].events), 1)
 
 
 if __name__ == "__main__":

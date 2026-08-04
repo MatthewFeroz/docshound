@@ -6,9 +6,9 @@ from typing import Any
 
 from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
 from opentelemetry import trace as trace_api
-from opentelemetry.trace import Status, StatusCode
 
 from app import events
+
 
 @contextmanager
 def traced_tool(name: str, run_id: str, repo: str):
@@ -46,8 +46,6 @@ def traced_tool(name: str, run_id: str, repo: str):
         except Exception as exc:
             status = "error"
             error_msg = str(exc)
-            span.record_exception(exc)
-            span.set_status(Status(StatusCode.ERROR, error_msg))
             raise
         finally:
             duration_ms = (perf_counter() - start) * 1000
