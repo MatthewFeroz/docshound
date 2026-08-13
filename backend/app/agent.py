@@ -1,8 +1,11 @@
 from app import events
-from app.langgraph_agent import graph
 from app.run_store import save_run
 from app.state import RUNS, AgentState, GapCluster, Issue, PullRequest, RunRequest
-from app.tracing import traced_run
+from app.tracing import set_run_output, setup_tracing, traced_run
+
+setup_tracing()
+
+from app.langgraph_agent import graph  # noqa: E402
 
 
 async def run_agent(request: RunRequest, state: AgentState | None = None) -> AgentState:
@@ -16,7 +19,7 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
     )
 
     try:
-        with traced_run(state.run_id, request.repo):
+        with traced_run(state.run_id, request.repo) as run_span:
             result = await graph.ainvoke(
                 {
                     "run_id": state.run_id,
@@ -44,6 +47,7 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
                     "tags": ["docshound", request.repo],
                 },
             )
+            set_run_output(run_span, result)
     except Exception as exc:
         state.errors.append(str(exc))
         state.status = "failed"
