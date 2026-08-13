@@ -27,6 +27,25 @@ DOC_MARKERS = {
     "site",
     "website",
 }
+GENERIC_README_PATH_TERMS = {
+    "app",
+    "content",
+    "dev",
+    "docs",
+    "documentation",
+    "e2e",
+    "github",
+    "internal",
+    "opencode",
+    "package",
+    "packages",
+    "src",
+    "test",
+    "tests",
+    "web",
+}
+LOCALE_SEGMENT = re.compile(r"^[a-z]{2}(?:-[a-z]{2})?$", re.IGNORECASE)
+ENGLISH_LOCALES = {"en", "en-gb", "en-us"}
 STOP_WORDS = {
     "a",
     "about",
@@ -193,15 +212,23 @@ async def _load_relevant_repository_documents(
             f"/repos/{repo}/git/trees/{quote(branch, safe='')}",
             params={"recursive": "1"},
         )
-        paths = [
-            str(item["path"])
-            for item in tree.get("tree") or []
-            if item.get("type") == "blob" and _is_documentation_path(str(item.get("path", "")))
-        ]
+        paths = _prefer_canonical_paths(
+            [
+                str(item["path"])
+                for item in tree.get("tree") or []
+                if item.get("type") == "blob"
+                and _is_documentation_path(str(item.get("path", "")))
+            ]
+        )
         ranked_paths: list[str] = []
         for cluster in clusters:
+            eligible_paths = [
+                path
+                for path in paths
+                if _path_is_relevant_for_cluster(cluster, path)
+            ]
             for path in sorted(
-                paths,
+                eligible_paths,
                 key=lambda candidate: _path_score(cluster, candidate),
                 reverse=True,
             )[:5]:
@@ -246,6 +273,67 @@ def _is_documentation_path(path: str) -> bool:
         return True
     lowered_parts = {part.lower() for part in pure.parts[:-1]}
     return bool(lowered_parts & DOC_MARKERS)
+
+
+def _prefer_canonical_paths(paths: list[str]) -> list[str]:
+    """Remove translated duplicates when a canonical or English page exists."""
+    grouped: dict[str, list[tuple[str, str | None]]] = {}
+    for path in paths:
+        canonical_path, locale = _delocalize_path(path)
+        grouped.setdefault(canonical_path, []).append((path, locale))
+
+    preferred: list[str] = []
+    for canonical_path, variants in grouped.items():
+        canonical = next(
+            (path for path, locale in variants if locale is None),
+            None,
+        )
+        if canonical:
+            preferred.append(canonical)
+            continue
+        english = next(
+            (
+                path
+                for path, locale in variants
+                if locale and locale.lower() in ENGLISH_LOCALES
+            ),
+            None,
+        )
+        if english:
+            preferred.append(english)
+            continue
+        preferred.extend(path for path, _locale in variants)
+    return preferred
+
+
+def _delocalize_path(path: str) -> tuple[str, str | None]:
+    parts = list(PurePosixPath(path).parts)
+    marker_indexes = [
+        index for index, part in enumerate(parts[:-1]) if part.lower() in DOC_MARKERS
+    ]
+    if not marker_indexes:
+        return path, None
+    marker_index = marker_indexes[-1]
+    locale_index = marker_index + 1
+    if locale_index >= len(parts) - 1:
+        return path, None
+    locale = parts[locale_index]
+    if not LOCALE_SEGMENT.fullmatch(locale):
+        return path, None
+    canonical = parts[:locale_index] + parts[locale_index + 1 :]
+    return str(PurePosixPath(*canonical)), locale
+
+
+def _path_is_relevant_for_cluster(cluster: GapCluster, path: str) -> bool:
+    pure = PurePosixPath(path)
+    if pure.name.lower() not in {"readme.md", "readme.mdx"}:
+        return True
+    if len(pure.parts) == 1:
+        return True
+
+    path_terms = set(_tokens(" ".join(pure.parts[:-1])))
+    explicit_path_terms = path_terms - GENERIC_README_PATH_TERMS
+    return bool(_cluster_terms(cluster) & explicit_path_terms)
 
 
 def _path_score(cluster: GapCluster, path: str) -> float:
