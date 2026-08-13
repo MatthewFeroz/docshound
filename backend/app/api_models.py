@@ -41,6 +41,7 @@ class DocumentationChangeResponse(BaseModel):
     file_path: str
     file_format: str
     detected_by: str
+    edit_action: str
     content: str
     patch: str
     existing_sha: str | None
@@ -76,6 +77,8 @@ class DocumentResponse(BaseModel):
     document: ApprovedDocumentResponse
     body_markdown: str
     documentation_change: DocumentationChangeResponse | None = None
+    suggested_file_path: str | None = None
+    suggested_action: str | None = None
     write_enabled: bool
 
 

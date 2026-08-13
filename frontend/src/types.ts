@@ -1,6 +1,23 @@
 export type Severity = "low" | "medium" | "high";
 export type ReviewStatus =
-  "pending_review" | "approved" | "rejected" | "published";
+  "pending_review" | "approved" | "rejected" | "published" | "no_change_needed";
+
+export interface DocSource {
+  title: string;
+  url: string;
+  snippet: string;
+  source_type: string;
+  confidence: number;
+  repository_path: string | null;
+}
+
+export interface DocumentationCoverage {
+  status: "missing" | "partial" | "documented" | "unable_to_verify";
+  rationale: string;
+  recommended_action: "create_page" | "update_page" | "no_change";
+  recommended_path: string | null;
+  relevant_sources: DocSource[];
+}
 
 export interface Issue {
   number: number;
@@ -40,6 +57,7 @@ export interface GapCluster {
   draft_markdown: string | null;
   review_status: ReviewStatus;
   approved_document_slug: string | null;
+  documentation_coverage: DocumentationCoverage | null;
 }
 
 export interface ApprovedSource {
@@ -70,6 +88,7 @@ export interface DocumentationChange {
   file_path: string;
   file_format: string;
   detected_by: string;
+  edit_action: "create_page" | "update_page";
   content: string;
   patch: string;
   existing_sha: string | null;
@@ -100,7 +119,7 @@ export interface Run {
   issues_scraped: number;
   pull_requests_scraped: number;
   clusters_found: number;
-  docs_sources: Array<{ title: string; url: string; snippet: string }>;
+  docs_sources: DocSource[];
   top_gaps: GapCluster[];
   decisions: Array<Record<string, unknown>>;
   errors: string[];
@@ -116,6 +135,8 @@ export interface DocumentPayload {
   document: ApprovedDocument;
   body_markdown: string;
   documentation_change: DocumentationChange | null;
+  suggested_file_path: string | null;
+  suggested_action: "create_page" | "update_page" | "no_change" | null;
   write_enabled: boolean;
 }
 

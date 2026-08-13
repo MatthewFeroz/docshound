@@ -160,6 +160,14 @@ export function PullRequestPage() {
                   <strong>{change.file_path}</strong>
                 </div>
                 <div>
+                  <span>Change type</span>
+                  <strong>
+                    {change.edit_action === "update_page"
+                      ? "Update existing page"
+                      : "Create new page"}
+                  </strong>
+                </div>
+                <div>
                   <span>Detected from</span>
                   <strong>{change.detected_by}</strong>
                 </div>

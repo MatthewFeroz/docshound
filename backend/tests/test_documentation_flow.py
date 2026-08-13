@@ -164,6 +164,55 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pull_request["base"], "main")
         self.assertIn("Evidence", pull_request["body"])
 
+    async def test_update_preserves_existing_page_and_appends_focused_section(self) -> None:
+        existing_page = (
+            "---\ntitle: Reliability\n---\n\n"
+            "# Reliability\n\nExisting guidance stays exactly as written.\n"
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/repos/acme/docs":
+                return httpx.Response(200, json={"default_branch": "main"})
+            if request.url.path == "/repos/acme/docs/git/trees/main":
+                return httpx.Response(
+                    200,
+                    json={
+                        "tree": [
+                            {
+                                "path": "guides/reliability.mdx",
+                                "type": "blob",
+                                "sha": "existing-sha",
+                            }
+                        ]
+                    },
+                )
+            if request.url.path.endswith("/contents/guides/reliability.mdx"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "content": base64.b64encode(existing_page.encode()).decode()
+                    },
+                )
+            return httpx.Response(404, json={"message": "not found"})
+
+        async with httpx.AsyncClient(
+            base_url="https://api.github.test",
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            change = await prepare_documentation_change(
+                self.document,
+                target_repo="acme/docs",
+                requested_path="guides/reliability.mdx",
+                edit_action="update_page",
+                client=client,
+            )
+
+        self.assertEqual(change.edit_action, "update_page")
+        self.assertTrue(change.content.startswith(existing_page.rstrip()))
+        self.assertIn("## Configure reliable retries", change.content)
+        self.assertIn("Existing guidance stays exactly as written.", change.content)
+        self.assertNotIn("-Existing guidance stays exactly as written.", change.patch)
+
 
 class RunStoreTests(unittest.TestCase):
     def test_run_round_trip(self) -> None:

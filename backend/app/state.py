@@ -38,6 +38,25 @@ class PullRequest(BaseModel):
     updated_at: datetime
 
 
+class DocSource(BaseModel):
+    title: str
+    url: str
+    snippet: str
+    source_type: str = "official_docs"
+    confidence: float = Field(ge=0, le=1)
+    repository_path: str | None = None
+
+
+class DocumentationCoverage(BaseModel):
+    status: Literal["missing", "partial", "documented", "unable_to_verify"] = (
+        "unable_to_verify"
+    )
+    rationale: str
+    recommended_action: Literal["create_page", "update_page", "no_change"]
+    recommended_path: str | None = None
+    relevant_sources: list[DocSource] = Field(default_factory=list)
+
+
 class GapCluster(BaseModel):
     name: str
     summary: str
@@ -50,18 +69,11 @@ class GapCluster(BaseModel):
     draft_title: str | None = None
     draft_summary: str | None = None
     draft_markdown: str | None = None
-    review_status: Literal["pending_review", "approved", "rejected", "published"] = (
-        "pending_review"
-    )
+    review_status: Literal[
+        "pending_review", "approved", "rejected", "published", "no_change_needed"
+    ] = "pending_review"
     approved_document_slug: str | None = None
-
-
-class DocSource(BaseModel):
-    title: str
-    url: str
-    snippet: str
-    source_type: str = "official_docs"
-    confidence: float = Field(ge=0, le=1)
+    documentation_coverage: DocumentationCoverage | None = None
 
 
 class AgentState(BaseModel):

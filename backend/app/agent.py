@@ -36,6 +36,7 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
                     "researched": False,
                     "analyzed": False,
                     "docs_searched": False,
+                    "drafted": False,
                     "stored": False,
                 },
                 config={
