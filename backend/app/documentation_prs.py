@@ -34,6 +34,7 @@ class DocumentationChange:
     file_path: str
     file_format: str
     detected_by: str
+    edit_action: str
     content: str
     patch: str
     existing_sha: str | None
@@ -50,6 +51,7 @@ async def prepare_documentation_change(
     *,
     target_repo: str,
     requested_path: str | None = None,
+    edit_action: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> DocumentationChange:
     target_repo = _validate_repo(target_repo)
@@ -92,7 +94,24 @@ async def prepare_documentation_change(
             if encoded:
                 previous_content = base64.b64decode(encoded).decode("utf-8")
 
-    content = _build_document_content(document, file_format)
+    if edit_action == "no_change":
+        raise DocumentationPullRequestError(
+            "This finding is already documented and does not need a pull request."
+        )
+    if existing_sha and edit_action == "create_page":
+        raise DocumentationPullRequestError(
+            f"`{file_path}` already exists. Choose a new path or update that page."
+        )
+    if not existing_sha and edit_action == "update_page":
+        raise DocumentationPullRequestError(
+            f"The recommended page `{file_path}` does not exist in {target_repo}."
+        )
+    effective_action = "update_page" if existing_sha else "create_page"
+    content = (
+        _build_updated_document_content(previous_content, document)
+        if effective_action == "update_page"
+        else _build_document_content(document, file_format)
+    )
     patch = _build_patch(file_path, previous_content, content)
     now = datetime.now(timezone.utc).isoformat()
     change = DocumentationChange(
@@ -103,6 +122,7 @@ async def prepare_documentation_change(
         file_path=file_path,
         file_format=file_format,
         detected_by=detected_by,
+        edit_action=effective_action,
         content=content,
         patch=patch,
         existing_sha=existing_sha,
@@ -270,9 +290,9 @@ def save_documentation_change(change: DocumentationChange) -> None:
             """
             INSERT INTO documentation_changes (
                 document_slug, target_repo, base_branch, branch_name, file_path,
-                file_format, detected_by, content, patch, existing_sha, status,
-                pr_number, pr_url, error, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                file_format, detected_by, edit_action, content, patch, existing_sha,
+                status, pr_number, pr_url, error, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(document_slug) DO UPDATE SET
                 target_repo = excluded.target_repo,
                 base_branch = excluded.base_branch,
@@ -280,6 +300,7 @@ def save_documentation_change(change: DocumentationChange) -> None:
                 file_path = excluded.file_path,
                 file_format = excluded.file_format,
                 detected_by = excluded.detected_by,
+                edit_action = excluded.edit_action,
                 content = excluded.content,
                 patch = excluded.patch,
                 existing_sha = excluded.existing_sha,
@@ -297,6 +318,7 @@ def save_documentation_change(change: DocumentationChange) -> None:
                 change.file_path,
                 change.file_format,
                 change.detected_by,
+                change.edit_action,
                 change.content,
                 change.patch,
                 change.existing_sha,
@@ -389,6 +411,30 @@ def _build_document_content(document: ApprovedDocument, file_format: str) -> str
     return f"{body.rstrip()}\n"
 
 
+def _build_updated_document_content(
+    previous_content: str,
+    document: ApprovedDocument,
+) -> str:
+    """Append a focused section while preserving every existing page byte above it."""
+    addition = document_body_markdown(document.markdown).strip()
+    addition = re.sub(
+        r"^#\s+.+?\s*$",
+        f"## {document.title}",
+        addition,
+        count=1,
+        flags=re.M,
+    )
+    if not re.match(r"^#{2,6}\s+", addition):
+        addition = f"## {document.title}\n\n{addition}"
+    if addition in previous_content:
+        return (
+            previous_content
+            if previous_content.endswith("\n")
+            else f"{previous_content}\n"
+        )
+    return f"{previous_content.rstrip()}\n\n{addition.rstrip()}\n"
+
+
 def _build_patch(file_path: str, previous: str, content: str) -> str:
     from_name = f"a/{file_path}" if previous else "/dev/null"
     return "".join(
@@ -413,7 +459,8 @@ def _pull_request_body(
     sources = "\n".join(source_lines) or "- No linked repository sources."
     return (
         "## Documentation update\n\n"
-        f"Adds `{change.file_path}` from an approved DocsHound finding.\n\n"
+        f"{('Updates' if change.edit_action == 'update_page' else 'Adds')} "
+        f"`{change.file_path}` from an approved DocsHound finding.\n\n"
         f"{document.summary}\n\n"
         "## Evidence\n\n"
         f"{sources}\n\n"
@@ -520,6 +567,7 @@ def _connect() -> sqlite3.Connection:
             file_path TEXT NOT NULL,
             file_format TEXT NOT NULL,
             detected_by TEXT NOT NULL,
+            edit_action TEXT NOT NULL DEFAULT 'create_page',
             content TEXT NOT NULL,
             patch TEXT NOT NULL,
             existing_sha TEXT,
@@ -532,6 +580,15 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(documentation_changes)")
+    }
+    if "edit_action" not in columns:
+        connection.execute(
+            "ALTER TABLE documentation_changes "
+            "ADD COLUMN edit_action TEXT NOT NULL DEFAULT 'create_page'"
+        )
     return connection
 
 
@@ -544,6 +601,7 @@ def _change_from_row(row: sqlite3.Row) -> DocumentationChange:
         file_path=row["file_path"],
         file_format=row["file_format"],
         detected_by=row["detected_by"],
+        edit_action=row["edit_action"],
         content=row["content"],
         patch=row["patch"],
         existing_sha=row["existing_sha"],

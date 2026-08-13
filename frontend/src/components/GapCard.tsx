@@ -28,15 +28,23 @@ export function GapCard({
       </header>
       <p className="gap-question">{cluster.recurring_question}</p>
       <p className="gap-summary">{cluster.summary}</p>
-      <section className="review-box">
-        <div className="review-label">Human review draft</div>
-        <h4>{cluster.draft_title || cluster.name}</h4>
-        <p>{cluster.draft_summary || cluster.summary}</p>
-        <details>
-          <summary>Preview generated Markdown</summary>
-          <pre>{cluster.draft_markdown || cluster.summary}</pre>
-        </details>
-      </section>
+      {cluster.review_status === "no_change_needed" ? (
+        <section className="review-box">
+          <div className="review-label">Documentation coverage</div>
+          <h4>Already documented</h4>
+          <p>{cluster.documentation_coverage?.rationale}</p>
+        </section>
+      ) : (
+        <section className="review-box">
+          <div className="review-label">Human review draft</div>
+          <h4>{cluster.draft_title || cluster.name}</h4>
+          <p>{cluster.draft_summary || cluster.summary}</p>
+          <details>
+            <summary>Preview generated Markdown</summary>
+            <pre>{cluster.draft_markdown || cluster.summary}</pre>
+          </details>
+        </section>
+      )}
       <footer className="gap-foot">
         <div className="gap-meta">
           <span>

@@ -1316,7 +1316,7 @@ main {
 .workflow-strip {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin: 22px 0;
 }
 .workflow-step {
@@ -1365,6 +1365,55 @@ main {
 }
 .finding-section {
   margin-top: 20px;
+}
+.coverage-section {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  padding: 18px;
+}
+.coverage-heading {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+.coverage-heading h3 {
+  margin-bottom: 0;
+}
+.coverage-pill {
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 5px 9px;
+  text-transform: uppercase;
+}
+.coverage-documented {
+  border-color: rgba(52, 211, 153, 0.35);
+  color: var(--ok);
+}
+.coverage-missing {
+  border-color: rgba(248, 80, 0, 0.4);
+  color: var(--accent);
+}
+.coverage-partial,
+.coverage-unable_to_verify {
+  border-color: rgba(251, 191, 36, 0.35);
+  color: #fbbf24;
+}
+.coverage-recommendation {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 12px 0 0;
+}
+.coverage-recommendation code {
+  color: var(--text);
+}
+.docs-source-list li {
+  background: rgba(52, 211, 153, 0.035);
 }
 .source-list {
   display: grid;
@@ -1824,7 +1873,7 @@ main {
 .pr-target-summary {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin: 24px 0;
 }
 .pr-target-summary div {

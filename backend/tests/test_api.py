@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app import approved_documents, documentation_prs, run_store
 from app.main import app
-from app.state import RUNS, AgentState, GapCluster, Issue
+from app.state import RUNS, AgentState, DocumentationCoverage, GapCluster, Issue
 
 
 class ApiTests(unittest.TestCase):
@@ -63,6 +63,12 @@ class ApiTests(unittest.TestCase):
                     confidence=0.9,
                     draft_title="Configure retries",
                     draft_markdown="# Configure retries\n\nUse bounded retries.",
+                    documentation_coverage=DocumentationCoverage(
+                        status="partial",
+                        rationale="The reliability page needs retry guidance.",
+                        recommended_action="update_page",
+                        recommended_path="docs/reliability.md",
+                    ),
                 )
             ],
         )
@@ -126,6 +132,10 @@ class ApiTests(unittest.TestCase):
         document = approval.json()["document"]
         self.assertEqual(document["title"], "Configure retries")
         self.assertEqual(document["source_issues"][0]["number"], 12)
+        self.assertEqual(approval.json()["suggested_action"], "update_page")
+        self.assertEqual(
+            approval.json()["suggested_file_path"], "docs/reliability.md"
+        )
 
         fetched = self.client.get(f"/api/v1/documents/{document['slug']}")
         self.assertEqual(fetched.status_code, 200)

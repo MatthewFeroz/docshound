@@ -22,11 +22,15 @@ Repository activity
         ↓
 Open gaps + shipped changes
         ↓
-Grounded Markdown draft
+Search relevant first-party documentation
+        ↓
+Assess coverage: missing, partial, or documented
+        ↓
+Grounded Markdown draft for missing or partial coverage
         ↓
 Human review and approval
         ↓
-Documentation patch preview
+New-page or existing-page patch preview
         ↓
 Documentation pull request
 ```

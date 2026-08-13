@@ -26,7 +26,11 @@ export function DocumentPage() {
         setTargetRepo(
           loaded.documentation_change?.target_repo || loaded.document.repo,
         );
-        setFilePath(loaded.documentation_change?.file_path || "");
+        setFilePath(
+          loaded.documentation_change?.file_path ||
+            loaded.suggested_file_path ||
+            "",
+        );
       })
       .catch((requestError: unknown) =>
         setError(
@@ -184,10 +188,15 @@ export function DocumentPage() {
                 </>
               ) : (
                 <>
-                  <h2>Send this to the documentation repository</h2>
+                  <h2>
+                    {payload.suggested_action === "update_page"
+                      ? "Update the relevant documentation page"
+                      : "Send this to the documentation repository"}
+                  </h2>
                   <p>
-                    DocsHound will detect the repository structure, choose
-                    Markdown or MDX, and prepare an exact patch.
+                    {payload.suggested_action === "update_page"
+                      ? "DocsHound found a related page and will preserve its existing content while adding this focused section."
+                      : "DocsHound will detect the repository structure, choose Markdown or MDX, and prepare an exact patch."}
                   </p>
                 </>
               )}

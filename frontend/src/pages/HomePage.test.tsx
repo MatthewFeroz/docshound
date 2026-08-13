@@ -55,6 +55,7 @@ const progressiveGap: GapCluster = {
   draft_markdown: "# Configure retries",
   review_status: "pending_review",
   approved_document_slug: null,
+  documentation_coverage: null,
 };
 
 describe("HomePage live analysis", () => {

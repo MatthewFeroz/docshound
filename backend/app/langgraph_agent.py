@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app import events
 from app.config import get_settings
 from app.state import DocSource, GapCluster, Issue, PullRequest
-from app.tools.cluster import attach_review_drafts, cluster_issues
+from app.tools.cluster import cluster_issues, draft_review_documents
 from app.tools.docs import search_official_docs
 from app.tools.github import research_pull_requests, research_repo
 from app.tracing import run_traced, setup_tracing
@@ -16,7 +16,7 @@ setup_tracing()
 
 
 class AgentDecision(BaseModel):
-    action: Literal["research", "analyze", "search_docs", "store"] = Field(
+    action: Literal["research", "analyze", "search_docs", "draft", "store"] = Field(
         description="The next tool node the agent should run."
     )
     reason: str = Field(description="Short reason for the selected action.")
@@ -39,6 +39,7 @@ class DocsHoundGraphState(TypedDict, total=False):
     researched: bool
     analyzed: bool
     docs_searched: bool
+    drafted: bool
     stored: bool
 
 
@@ -61,14 +62,16 @@ then preserve the audit trail for review.
 Available actions:
 - research: fetch recent GitHub issues and merged pull requests for the repo
 - analyze: identify recurring gaps and shipped changes that need documentation
-- search_docs: inspect configured official docs for citation evidence
+- search_docs: search relevant first-party documentation and assess coverage
+- draft: write only the missing or partial documentation after coverage is known
 - store: finalize the run and its audit trail
 
 Rules:
 - Research must happen before analysis.
 - Analysis should happen after issues are available.
 - Search docs should happen after analysis.
-- Store should happen after docs search, or after an error.
+- Draft should happen after docs search.
+- Store should happen after drafting, or after an error.
 - Do not choose an action that has already completed unless there is no other valid action.
 
 Current state:
@@ -77,6 +80,7 @@ Current state:
 - researched: {state.get("researched", False)}
 - analyzed: {state.get("analyzed", False)}
 - docs_searched: {state.get("docs_searched", False)}
+- drafted: {state.get("drafted", False)}
 - stored: {state.get("stored", False)}
 - issues_count: {len(state.get("issues", []))}
 - merged_pull_requests_count: {len(state.get("pull_requests", []))}
@@ -112,20 +116,24 @@ Choose the next action.
 
 def _safe_next_action(
     state: DocsHoundGraphState,
-) -> Literal["research", "analyze", "search_docs", "store"]:
+) -> Literal["research", "analyze", "search_docs", "draft", "store"]:
+    if state.get("errors"):
+        return "store"
     if not state.get("researched") and not state.get("errors"):
         return "research"
     if (state.get("issues") or state.get("pull_requests")) and not state.get("analyzed"):
         return "analyze"
     if state.get("analyzed") and not state.get("docs_searched"):
         return "search_docs"
+    if state.get("docs_searched") and not state.get("drafted"):
+        return "draft"
     return "store"
 
 
 def _guard_action(
     state: DocsHoundGraphState,
-    action: Literal["research", "analyze", "search_docs", "store"],
-) -> Literal["research", "analyze", "search_docs", "store"]:
+    action: Literal["research", "analyze", "search_docs", "draft", "store"],
+) -> Literal["research", "analyze", "search_docs", "draft", "store"]:
     safe = _safe_next_action(state)
     if action == safe:
         return action
@@ -150,7 +158,7 @@ def _record_decision(state: DocsHoundGraphState) -> None:
 
 def route(
     state: DocsHoundGraphState,
-) -> Literal["research", "analyze", "search_docs", "store"]:
+) -> Literal["research", "analyze", "search_docs", "draft", "store"]:
     return state["next_action"]  # type: ignore[return-value]
 
 
@@ -207,14 +215,8 @@ async def analyze(state: DocsHoundGraphState) -> DocsHoundGraphState:
             issues,
             pull_requests,
         )
-        clusters = attach_review_drafts(clusters, issues, pull_requests)
         cluster_dicts = [cluster.model_dump(mode="json") for cluster in clusters]
         state["clusters"] = cluster_dicts
-        for index, cluster in enumerate(cluster_dicts):
-            events.publish(
-                state["run_id"],
-                {"type": "gap_found", "index": index, "cluster": cluster},
-            )
     except Exception as exc:
         state.setdefault("errors", []).append(str(exc))
     finally:
@@ -228,7 +230,7 @@ async def search_docs(state: DocsHoundGraphState) -> DocsHoundGraphState:
             GapCluster.model_validate(cluster)
             for cluster in state.get("clusters", [])
         ]
-        sources = await run_traced(
+        clusters, sources = await run_traced(
             "search_official_docs",
             state["run_id"],
             state["repo"],
@@ -238,6 +240,9 @@ async def search_docs(state: DocsHoundGraphState) -> DocsHoundGraphState:
             clusters,
         )
         source_dicts = [source.model_dump(mode="json") for source in sources]
+        state["clusters"] = [
+            cluster.model_dump(mode="json") for cluster in clusters
+        ]
         state["docs_sources"] = source_dicts
         events.publish(
             state["run_id"],
@@ -254,6 +259,40 @@ async def search_docs(state: DocsHoundGraphState) -> DocsHoundGraphState:
     return state
 
 
+async def draft(state: DocsHoundGraphState) -> DocsHoundGraphState:
+    try:
+        issues = [Issue.model_validate(issue) for issue in state.get("issues", [])]
+        pull_requests = [
+            PullRequest.model_validate(pull_request)
+            for pull_request in state.get("pull_requests", [])
+        ]
+        clusters = [
+            GapCluster.model_validate(cluster)
+            for cluster in state.get("clusters", [])
+        ]
+        clusters = await run_traced(
+            "draft_review_documents",
+            state["run_id"],
+            state["repo"],
+            draft_review_documents,
+            clusters,
+            issues,
+            pull_requests,
+        )
+        cluster_dicts = [cluster.model_dump(mode="json") for cluster in clusters]
+        state["clusters"] = cluster_dicts
+        for index, cluster in enumerate(cluster_dicts):
+            events.publish(
+                state["run_id"],
+                {"type": "gap_found", "index": index, "cluster": cluster},
+            )
+    except Exception as exc:
+        state.setdefault("errors", []).append(str(exc))
+    finally:
+        state["drafted"] = True
+    return state
+
+
 async def store(state: DocsHoundGraphState) -> DocsHoundGraphState:
     state["stored"] = True
     return state
@@ -264,6 +303,7 @@ builder.add_node("llm_decide", llm_decide)
 builder.add_node("research", research)
 builder.add_node("analyze", analyze)
 builder.add_node("search_docs", search_docs)
+builder.add_node("draft", draft)
 builder.add_node("store", store)
 
 builder.set_entry_point("llm_decide")
@@ -274,12 +314,14 @@ builder.add_conditional_edges(
         "research": "research",
         "analyze": "analyze",
         "search_docs": "search_docs",
+        "draft": "draft",
         "store": "store",
     },
 )
 builder.add_edge("research", "llm_decide")
 builder.add_edge("analyze", "llm_decide")
 builder.add_edge("search_docs", "llm_decide")
+builder.add_edge("draft", "llm_decide")
 builder.add_edge("store", END)
 
 graph = builder.compile()

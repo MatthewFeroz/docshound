@@ -147,10 +147,16 @@ def _finding_response(state: AgentState, index: int) -> FindingResponse:
 
 
 def _document_response(document: ApprovedDocument) -> DocumentResponse:
+    state = _get_run_state(document.run_id)
+    coverage = None
+    if state and 0 <= document.gap_index < len(state.clusters):
+        coverage = state.clusters[document.gap_index].documentation_coverage
     return DocumentResponse(
         document=document,
         body_markdown=document_body_markdown(document.markdown),
         documentation_change=get_documentation_change(document.slug),
+        suggested_file_path=coverage.recommended_path if coverage else None,
+        suggested_action=coverage.recommended_action if coverage else None,
         write_enabled=write_enabled(),
     )
 
@@ -294,6 +300,11 @@ async def approve_finding(
         raise HTTPException(status_code=422, detail="The approved document cannot be empty")
 
     cluster = finding.cluster
+    if cluster.review_status == "no_change_needed":
+        raise HTTPException(
+            status_code=409,
+            detail="Existing documentation already covers this finding.",
+        )
     document = save_approved_document(
         run_id=run_id,
         gap_index=index,
@@ -370,11 +381,21 @@ async def preview_documentation_pull_request(
     document = get_approved_document(slug)
     if document is None:
         raise HTTPException(status_code=404, detail="Approved document not found")
+    state = _get_run_state(document.run_id)
+    coverage = None
+    if state and 0 <= document.gap_index < len(state.clusters):
+        coverage = state.clusters[document.gap_index].documentation_coverage
+    suggested_path = coverage.recommended_path if coverage else None
+    requested_path = request.file_path or suggested_path
+    edit_action = None
+    if coverage and (not request.file_path or request.file_path == suggested_path):
+        edit_action = coverage.recommended_action
     try:
         await prepare_documentation_change(
             document,
             target_repo=request.target_repo,
-            requested_path=request.file_path,
+            requested_path=requested_path,
+            edit_action=edit_action,
         )
     except DocumentationPullRequestError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
