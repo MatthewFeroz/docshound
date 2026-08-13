@@ -3,6 +3,12 @@
 !.env.example
 clickhouse_credentials.txt
 .venv/
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
 __pycache__/
 *.py[cod]
 .DS_Store
@@ -12,6 +18,9 @@ __pycache__/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+backend/data/*.db
+backend/data/*.db-shm
+backend/data/*.db-wal
 .agents/
 .claude/
 .cursor/

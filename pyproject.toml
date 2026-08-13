@@ -1,9 +1,0 @@
-[project]
-name = "docshound"
-version = "0.1.0"
-description = "DocsHound turns GitHub issues and merged pull requests into citeable documentation"
-requires-python = ">=3.11"
-dependencies = []
-
-[tool.setuptools.packages.find]
-include = ["app*"]
