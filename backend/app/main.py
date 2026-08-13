@@ -26,6 +26,7 @@ from app.approved_documents import (
     save_approved_document,
 )
 from app.config import get_settings
+from app.llm import get_llm_route
 from app.documentation_prs import (
     DocumentationPullRequestError,
     create_documentation_pull_request,
@@ -177,7 +178,13 @@ async def health() -> dict[str, str]:
 
 @app.get("/api/v1/config", response_model=RuntimeConfigResponse)
 async def runtime_config() -> RuntimeConfigResponse:
-    return RuntimeConfigResponse(write_enabled=write_enabled())
+    route = get_llm_route()
+    return RuntimeConfigResponse(
+        write_enabled=write_enabled(),
+        llm_gateway=route.gateway if route else None,
+        llm_primary_model=route.models[0] if route and route.models else None,
+        llm_fallback_model=route.models[1] if route and len(route.models) > 1 else None,
+    )
 
 
 @app.post("/api/v1/runs", response_model=CreateRunResponse, status_code=202)

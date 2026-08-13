@@ -84,3 +84,6 @@ class DocumentResponse(BaseModel):
 
 class RuntimeConfigResponse(BaseModel):
     write_enabled: bool
+    llm_gateway: str | None = None
+    llm_primary_model: str | None = None
+    llm_fallback_model: str | None = None

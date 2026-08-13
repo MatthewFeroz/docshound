@@ -12,8 +12,8 @@ The project contains two independently deployable applications:
 - `frontend/` — React, TypeScript, and Vite static application
 - `backend/` — FastAPI JSON/SSE API and agent runtime
 
-The browser never receives OpenAI or GitHub credentials. All secrets stay in
-the backend runtime.
+The browser never receives model-provider, Merge Gateway, or GitHub
+credentials. All secrets stay in the backend runtime.
 
 ## Product flow
 
@@ -81,7 +81,10 @@ existing local installations):
 ```text
 GITHUB_TOKEN=          # optional: higher read limits
 GITHUB_WRITE_TOKEN=    # optional: create documentation branches and PRs
-OPENAI_API_KEY=        # optional: model-based analysis instead of heuristics
+MERGE_GATEWAY_API_KEY= # recommended: model-based analysis through Gateway
+MERGE_GATEWAY_PRIMARY_MODEL=google/gemini-3.7-flash
+MERGE_GATEWAY_FALLBACK_MODEL=openai/gpt-5.6-luna
+OPENAI_API_KEY=        # optional legacy direct-provider fallback
 OPENAI_MODEL=gpt-4o-mini
 ALLOWED_ORIGINS=http://localhost:5173
 DOCSHOUND_DB_PATH=     # optional: explicit shared SQLite path
@@ -100,14 +103,16 @@ VITE_API_BASE_URL=https://api.example.com
 ```
 
 Values prefixed with `VITE_` are public and embedded in the browser bundle.
-Never place OpenAI or GitHub credentials in the frontend environment.
+Never place Merge Gateway, model-provider, or GitHub credentials in the
+frontend environment.
 
 ### OpenTelemetry and OpenInference tracing
 
 DocsHound can export traces to any OTLP/HTTP-compatible collector. Each run is
 an OpenInference `AGENT` span, repository operations are `TOOL` spans, and the
-LangChain, LangGraph, and OpenAI calls beneath them are instrumented
-automatically.
+LangChain, LangGraph, and OpenAI-compatible Gateway calls beneath them are
+instrumented automatically. Model spans include the requested provider/model,
+the model returned by Gateway, and whether DocsHound used its fallback route.
 
 Set a collector base URL to enable tracing:
 

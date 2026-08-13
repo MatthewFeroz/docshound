@@ -60,6 +60,8 @@ def setup_tracing() -> bool:
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
         trace.set_tracer_provider(provider)
 
+    # The OpenAI SDK instrumentor also covers calls made through Merge
+    # Gateway's OpenAI-compatible endpoint.
     LangChainInstrumentor().instrument(tracer_provider=provider)
     OpenAIInstrumentor().instrument(tracer_provider=provider)
     _tracer = provider.get_tracer("docshound.agent")

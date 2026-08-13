@@ -1,11 +1,10 @@
 from typing import Literal, TypedDict
 
-from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
 from app import events
-from app.config import get_settings
+from app.llm import complete_json, llm_is_configured
 from app.state import DocSource, GapCluster, Issue, PullRequest
 from app.tools.cluster import cluster_issues, draft_review_documents
 from app.tools.docs import search_official_docs
@@ -45,10 +44,9 @@ class DocsHoundGraphState(TypedDict, total=False):
 
 async def llm_decide(state: DocsHoundGraphState) -> DocsHoundGraphState:
     fallback_action = _safe_next_action(state)
-    settings = get_settings()
-    if not settings.openai_api_key:
+    if not llm_is_configured():
         state["next_action"] = fallback_action
-        state["decision_reason"] = "OPENAI_API_KEY is not set; used fallback router."
+        state["decision_reason"] = "No LLM credential is set; used fallback router."
         _record_decision(state)
         return state
 
@@ -91,12 +89,20 @@ Current state:
 Choose the next action.
 """
     try:
-        model = ChatOpenAI(
-            model=settings.openai_model,
-            api_key=settings.openai_api_key,
-            temperature=0,
-        ).with_structured_output(AgentDecision)
-        decision = await model.ainvoke(prompt)
+        completion = await complete_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Select the next DocsHound workflow action. Return JSON "
+                        "with exactly two fields: action and reason."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            validator=AgentDecision.model_validate,
+        )
+        decision = completion.value
         action = _guard_action(state, decision.action)
         state["next_action"] = action
         if action != decision.action:

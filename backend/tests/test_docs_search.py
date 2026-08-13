@@ -48,12 +48,12 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
             base_url="https://api.github.test",
             transport=httpx.MockTransport(handler),
         ) as client:
-            with patch(
-                "app.tools.docs.get_settings",
-                return_value=SimpleNamespace(
-                    github_token=None,
-                    openai_api_key=None,
+            with (
+                patch(
+                    "app.tools.docs.get_settings",
+                    return_value=SimpleNamespace(github_token=None),
                 ),
+                patch("app.tools.docs.llm_is_configured", return_value=False),
             ):
                 clusters, _sources = await search_official_docs(
                     "acme/opencode",
@@ -111,12 +111,12 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
             base_url="https://api.github.test",
             transport=httpx.MockTransport(handler),
         ) as client:
-            with patch(
-                "app.tools.docs.get_settings",
-                return_value=SimpleNamespace(
-                    github_token=None,
-                    openai_api_key=None,
+            with (
+                patch(
+                    "app.tools.docs.get_settings",
+                    return_value=SimpleNamespace(github_token=None),
                 ),
+                patch("app.tools.docs.llm_is_configured", return_value=False),
             ):
                 clusters, sources = await search_official_docs(
                     "acme/opencode",
@@ -217,10 +217,7 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
                 recommended_action="no_change",
             ),
         )
-        with patch(
-            "app.tools.cluster.get_settings",
-            return_value=SimpleNamespace(openai_api_key=None),
-        ):
+        with patch("app.tools.cluster.llm_is_configured", return_value=False):
             drafted = await draft_review_documents([cluster], [], [])
 
         self.assertEqual(drafted[0].review_status, "no_change_needed")

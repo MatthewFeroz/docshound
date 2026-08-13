@@ -12,6 +12,7 @@ import { HomePage } from "./HomePage";
 
 const mocks = vi.hoisted(() => ({
   createRun: vi.fn(),
+  getRuntimeConfig: vi.fn(),
   getRun: vi.fn(),
   eventHandler: undefined as ((event: unknown) => void) | undefined,
 }));
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../api", () => ({
   api: {
     createRun: mocks.createRun,
+    getRuntimeConfig: mocks.getRuntimeConfig,
     getRun: mocks.getRun,
   },
   subscribeToRun: (_runId: string, onEvent: (event: unknown) => void) => {
@@ -62,7 +64,14 @@ describe("HomePage live analysis", () => {
   beforeEach(() => {
     mocks.eventHandler = undefined;
     mocks.createRun.mockReset();
+    mocks.getRuntimeConfig.mockReset();
     mocks.getRun.mockReset();
+    mocks.getRuntimeConfig.mockResolvedValue({
+      write_enabled: false,
+      llm_gateway: "merge",
+      llm_primary_model: "google/gemini-3.7-flash",
+      llm_fallback_model: "openai/gpt-5.6-luna",
+    });
     mocks.createRun.mockResolvedValue({
       run_id: runningRun.run_id,
       status: "running",
