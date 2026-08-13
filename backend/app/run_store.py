@@ -1,11 +1,8 @@
 import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 
+from app.database import DB_PATH
 from app.state import AgentState
-
-
-DB_PATH = Path(__file__).parent.parent / "data" / "docshound.db"
 
 
 def save_run(state: AgentState) -> None:

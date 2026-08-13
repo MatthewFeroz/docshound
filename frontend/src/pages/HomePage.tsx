@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { api, subscribeToRun } from "../api";
 import { BrandHeader } from "../components/BrandHeader";
 import { GapCard } from "../components/GapCard";
-import type { Run, RunEvent } from "../types";
+import type { GapCluster, Run, RunEvent } from "../types";
 
 interface TimelineItem {
   id: string;
@@ -13,6 +13,11 @@ interface TimelineItem {
   label: string;
   detail?: string;
   meta?: string;
+}
+
+interface LiveGap {
+  cluster: GapCluster;
+  index: number;
 }
 
 function presentEvent(event: RunEvent, sequence: number): TimelineItem {
@@ -89,6 +94,7 @@ export function HomePage() {
   const [runId, setRunId] = useState<string | null>(null);
   const [run, setRun] = useState<Run | null>(null);
   const [events, setEvents] = useState<TimelineItem[]>([]);
+  const [liveGaps, setLiveGaps] = useState<LiveGap[]>([]);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -113,6 +119,20 @@ export function HomePage() {
           ...current,
           presentEvent(event, current.length),
         ]);
+        if (
+          event.type === "gap_found" &&
+          event.cluster &&
+          event.index !== undefined
+        ) {
+          const cluster = event.cluster;
+          const index = event.index;
+          setLiveGaps((current) =>
+            [
+              ...current.filter((finding) => finding.index !== index),
+              { cluster, index },
+            ].sort((left, right) => left.index - right.index),
+          );
+        }
         void refreshRun(runId);
       },
       () => void refreshRun(runId),
@@ -134,6 +154,7 @@ export function HomePage() {
       const created = await api.createRun(repo);
       setRunId(created.run_id);
       setRun(null);
+      setLiveGaps([]);
       setEvents([
         {
           id: "started",
@@ -154,6 +175,11 @@ export function HomePage() {
       setStarting(false);
     }
   }
+
+  const persistedGaps =
+    run?.top_gaps.map((cluster, index) => ({ cluster, index })) ?? [];
+  const displayedGaps =
+    persistedGaps.length >= liveGaps.length ? persistedGaps : liveGaps;
 
   return (
     <>
@@ -249,13 +275,11 @@ export function HomePage() {
             <section className="panel gaps-panel">
               <header className="panel-head">
                 <h2>Gaps Discovered</h2>
-                <span className="panel-sub">
-                  {run?.clusters_found || 0} found
-                </span>
+                <span className="panel-sub">{displayedGaps.length} found</span>
               </header>
               <div className="gaps">
-                {run?.top_gaps.length ? (
-                  run.top_gaps.map((cluster, index) => (
+                {displayedGaps.length ? (
+                  displayedGaps.map(({ cluster, index }) => (
                     <GapCard
                       key={`${cluster.name}-${index}`}
                       cluster={cluster}

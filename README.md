@@ -33,7 +33,7 @@ Documentation pull request
 
 ## Run locally
 
-Requires Python 3.11+, Node.js 20+, and npm.
+Requires Python 3.11+, Node.js 20.19+ (or 22.12+), and npm.
 
 Set up the backend:
 
@@ -80,6 +80,7 @@ GITHUB_WRITE_TOKEN=    # optional: create documentation branches and PRs
 OPENAI_API_KEY=        # optional: model-based analysis instead of heuristics
 OPENAI_MODEL=gpt-4o-mini
 ALLOWED_ORIGINS=http://localhost:5173
+DOCSHOUND_DB_PATH=     # optional: explicit shared SQLite path
 ```
 
 For pull-request creation, use a fine-grained GitHub token limited to the target
@@ -135,11 +136,21 @@ curl -N http://127.0.0.1:8000/api/v1/runs/<RUN_ID>/events
 The API also exposes findings, approval/rejection, approved documents,
 repository patch previews, patch downloads, and pull-request creation.
 
+For compatibility with existing integrations, `POST /runs`,
+`GET /runs/{run_id}`, and `GET /runs/{run_id}/events.json` remain available as
+aliases for the original DocsHound API contract. New integrations should use
+the versioned `/api/v1` routes.
+
 ## Persistence
 
-The backend stores local application state in `backend/data/docshound.db`. It
-includes completed runs, findings, approved document revisions, prepared
-patches, and created pull-request metadata.
+The backend stores local application state in `backend/data/docshound.db`. When
+upgrading an existing source checkout, it automatically continues using
+`data/docshound.db` if that legacy database exists and the new path does not.
+No data is copied or deleted. Set `DOCSHOUND_DB_PATH` when a deployment needs an
+explicit shared location.
+
+The database includes completed runs, findings, approved document revisions,
+prepared patches, and created pull-request metadata.
 
 SQLite and the in-process event stream are appropriate for a single backend
 replica. A multi-replica deployment should use shared persistence and event
@@ -158,6 +169,7 @@ Run frontend checks:
 
 ```bash
 cd frontend
+npm run format:check
 npm run typecheck
 npm test
 npm run build

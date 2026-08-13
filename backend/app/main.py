@@ -155,6 +155,14 @@ def _document_response(document: ApprovedDocument) -> DocumentResponse:
     )
 
 
+def _start_run(request: RunRequest) -> AgentState:
+    state = AgentState(repo=request.repo, dry_run=request.dry_run)
+    RUNS[state.run_id] = state
+    save_run(state)
+    asyncio.create_task(run_agent(request, state=state))
+    return state
+
+
 @app.get("/health")
 @app.get("/api/v1/health")
 async def health() -> dict[str, str]:
@@ -179,11 +187,15 @@ async def create_run(request: CreateRunRequest) -> CreateRunResponse:
         limit=request.limit,
         dry_run=request.dry_run,
     )
-    state = AgentState(repo=repo, dry_run=request.dry_run)
-    RUNS[state.run_id] = state
-    save_run(state)
-    asyncio.create_task(run_agent(run_request, state=state))
+    state = _start_run(run_request)
     return CreateRunResponse(run_id=state.run_id, status=state.status, repo=state.repo)
+
+
+@app.post("/runs", include_in_schema=False)
+async def create_run_legacy(request: RunRequest) -> dict[str, str]:
+    """Compatibility route for API clients built against DocsHound 0.x."""
+    state = _start_run(request)
+    return {"run_id": state.run_id}
 
 
 @app.get("/api/v1/runs", response_model=list[RunResponse])
@@ -191,6 +203,7 @@ async def list_runs() -> list[RunResponse]:
     return [_run_response(state) for state in load_runs()]
 
 
+@app.get("/runs/{run_id}", response_model=RunResponse, include_in_schema=False)
 @app.get("/api/v1/runs/{run_id}", response_model=RunResponse)
 async def get_run(run_id: str) -> RunResponse:
     return _run_response(_require_run(run_id))
@@ -240,6 +253,27 @@ async def stream_events(run_id: str) -> EventSourceResponse:
 
         async for event in events.subscribe(run_id):
             yield {"data": json.dumps(event)}
+
+    return EventSourceResponse(event_generator())
+
+
+@app.get("/runs/{run_id}/events.json", include_in_schema=False)
+async def stream_events_json_legacy(run_id: str) -> EventSourceResponse:
+    """Preserve the named JSON event stream exposed by DocsHound 0.x."""
+    state = _require_run(run_id)
+
+    async def event_generator():
+        if state.status != "running":
+            event = {
+                "type": "run_completed",
+                "run_id": state.run_id,
+                "status": state.status,
+            }
+            yield {"event": event["type"], "data": json.dumps(event)}
+            return
+
+        async for event in events.subscribe(run_id):
+            yield {"event": event["type"], "data": json.dumps(event)}
 
     return EventSourceResponse(event_generator())
 

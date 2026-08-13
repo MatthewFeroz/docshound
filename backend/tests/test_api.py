@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -86,6 +87,28 @@ class ApiTests(unittest.TestCase):
             preflight.headers["access-control-allow-origin"],
             "http://localhost:5173",
         )
+
+    def test_legacy_run_routes_remain_compatible(self) -> None:
+        with patch("app.main.run_agent", new=AsyncMock()):
+            created = self.client.post(
+                "/runs",
+                json={"repo": "acme/product", "limit": 25, "dry_run": True},
+            )
+
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(set(created.json()), {"run_id"})
+        run_id = created.json()["run_id"]
+
+        fetched = self.client.get(f"/runs/{run_id}")
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.json()["run_id"], run_id)
+        self.assertEqual(fetched.json()["repo"], "acme/product")
+
+        RUNS[run_id].status = "completed"
+        events = self.client.get(f"/runs/{run_id}/events.json")
+        self.assertEqual(events.status_code, 200)
+        self.assertIn("event: run_completed", events.text)
+        self.assertIn('"status": "completed"', events.text)
 
     def test_finding_review_contract(self) -> None:
         state = self._seed_run()

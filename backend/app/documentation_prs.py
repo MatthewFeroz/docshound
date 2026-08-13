@@ -6,16 +6,15 @@ import sqlite3
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from urllib.parse import quote
 
 import httpx
 
 from app.approved_documents import ApprovedDocument, document_body_markdown
 from app.config import get_settings
+from app.database import DB_PATH
 
-
-DB_PATH = Path(__file__).parent.parent / "data" / "docshound.db"
 GITHUB_API = "https://api.github.com"
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 

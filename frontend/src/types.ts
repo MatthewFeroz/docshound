@@ -131,4 +131,5 @@ export interface RunEvent {
   error?: string;
   title?: string;
   index?: number;
+  cluster?: GapCluster;
 }
