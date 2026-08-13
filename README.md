@@ -98,6 +98,27 @@ VITE_API_BASE_URL=https://api.example.com
 Values prefixed with `VITE_` are public and embedded in the browser bundle.
 Never place OpenAI or GitHub credentials in the frontend environment.
 
+### OpenTelemetry and OpenInference tracing
+
+DocsHound can export traces to any OTLP/HTTP-compatible collector. Each run is
+an OpenInference `AGENT` span, repository operations are `TOOL` spans, and the
+LangChain, LangGraph, and OpenAI calls beneath them are instrumented
+automatically.
+
+Set a collector base URL to enable tracing:
+
+```text
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_SERVICE_NAME=docshound
+```
+
+Standard options including `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_RESOURCE_ATTRIBUTES`, and
+`OTEL_SDK_DISABLED` are supported. Set `OPENINFERENCE_HIDE_INPUTS=true` and/or
+`OPENINFERENCE_HIDE_OUTPUTS=true` when model content must not be captured by
+automatic instrumentation. DocsHound's custom spans record repository identity
+and result counts, not issue, pull-request, or document bodies.
+
 ## Docker
 
 Build and run both applications locally:

@@ -10,7 +10,9 @@ from app.state import DocSource, GapCluster, Issue, PullRequest
 from app.tools.cluster import attach_review_drafts, cluster_issues
 from app.tools.docs import search_official_docs
 from app.tools.github import research_pull_requests, research_repo
-from app.tracing import run_traced
+from app.tracing import run_traced, setup_tracing
+
+setup_tracing()
 
 
 class AgentDecision(BaseModel):
