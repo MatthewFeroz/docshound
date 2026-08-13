@@ -4,10 +4,8 @@ import re
 from collections import defaultdict
 
 from langsmith import traceable
-from langsmith.run_helpers import get_current_run_tree
-from openai import AsyncOpenAI
 
-from app.config import get_settings
+from app.llm import complete_json, llm_is_configured, require_json_array
 from app.state import GapCluster, Issue, PullRequest
 
 
@@ -73,8 +71,7 @@ async def cluster_issues(
     issues: list[Issue], pull_requests: list[PullRequest] | None = None
 ) -> list[GapCluster]:
     pull_requests = pull_requests or []
-    settings = get_settings()
-    if settings.openai_api_key and len(issues) + len(pull_requests) >= 2:
+    if llm_is_configured() and len(issues) + len(pull_requests) >= 2:
         try:
             clusters = await _cluster_with_llm(issues, pull_requests)
             if clusters:
@@ -98,8 +95,6 @@ async def cluster_issues(
 async def _cluster_with_llm(
     issues: list[Issue], pull_requests: list[PullRequest]
 ) -> list[GapCluster]:
-    settings = get_settings()
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
     issue_payload = [
         {
             "number": issue.number,
@@ -121,11 +116,8 @@ async def _cluster_with_llm(
         for pull_request in pull_requests[:30]
     ]
 
-    response = await client.chat.completions.create(
-        model=settings.openai_model,
-        temperature=0,
-        response_format={"type": "json_object"},
-        messages=[
+    completion = await complete_json(
+        [
             {
                 "role": "system",
                 "content": (
@@ -165,20 +157,12 @@ async def _cluster_with_llm(
                 ),
             },
         ],
+        validator=require_json_array(
+            "clusters",
+            item_validator=GapCluster.model_validate,
+        ),
     )
-    current_run = get_current_run_tree()
-    if current_run is not None:
-        usage = response.usage
-        current_run.add_metadata(
-            {
-                "model": settings.openai_model,
-                "input_tokens": getattr(usage, "prompt_tokens", None),
-                "output_tokens": getattr(usage, "completion_tokens", None),
-                "total_tokens": getattr(usage, "total_tokens", None),
-            }
-        )
-    raw = response.choices[0].message.content or "{}"
-    data = json.loads(raw)
+    data = completion.value
     return [GapCluster.model_validate(item) for item in data.get("clusters", [])[:8]]
 
 
@@ -436,8 +420,7 @@ async def draft_review_documents(
             cluster.draft_summary = None
             cluster.draft_markdown = None
 
-    settings = get_settings()
-    if settings.openai_api_key and draftable:
+    if llm_is_configured() and draftable:
         try:
             await _draft_with_llm(draftable, issues, pull_requests or [])
         except Exception:
@@ -456,7 +439,6 @@ async def _draft_with_llm(
     issues: list[Issue],
     pull_requests: list[PullRequest],
 ) -> list[GapCluster]:
-    settings = get_settings()
     issue_by_number = {issue.number: issue for issue in issues}
     pull_request_by_number = {
         pull_request.number: pull_request for pull_request in pull_requests
@@ -494,11 +476,8 @@ async def _draft_with_llm(
                 ],
             }
         )
-    response = await AsyncOpenAI(api_key=settings.openai_api_key).chat.completions.create(
-        model=settings.openai_model,
-        temperature=0,
-        response_format={"type": "json_object"},
-        messages=[
+    completion = await complete_json(
+        [
             {
                 "role": "system",
                 "content": (
@@ -516,8 +495,12 @@ async def _draft_with_llm(
             },
             {"role": "user", "content": json.dumps({"findings": findings})},
         ],
+        validator=require_json_array(
+            "drafts",
+            item_validator=_validate_draft_item,
+        ),
     )
-    raw = json.loads(response.choices[0].message.content or "{}")
+    raw = completion.value
     for item in raw.get("drafts", []):
         if not isinstance(item, dict) or not isinstance(item.get("index"), int):
             continue
@@ -532,6 +515,14 @@ async def _draft_with_llm(
         if isinstance(item.get("draft_markdown"), str):
             cluster.draft_markdown = item["draft_markdown"]
     return clusters
+
+
+def _validate_draft_item(item: object) -> None:
+    if not isinstance(item, dict) or not isinstance(item.get("index"), int):
+        raise ValueError("Every draft must contain an integer index")
+    for field in ("draft_title", "draft_summary", "draft_markdown"):
+        if not isinstance(item.get(field), str):
+            raise ValueError(f"Every draft must contain a string {field}")
 
 
 @traceable(

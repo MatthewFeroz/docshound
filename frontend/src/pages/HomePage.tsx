@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { api, subscribeToRun } from "../api";
 import { BrandHeader } from "../components/BrandHeader";
 import { GapCard } from "../components/GapCard";
-import type { GapCluster, Run, RunEvent } from "../types";
+import type { GapCluster, Run, RunEvent, RuntimeConfig } from "../types";
 
 interface TimelineItem {
   id: string;
@@ -89,6 +89,19 @@ function presentEvent(event: RunEvent, sequence: number): TimelineItem {
   }
 }
 
+function modelLabel(model: string): string {
+  return model
+    .split("/")
+    .at(-1)!
+    .split("-")
+    .map((part) => {
+      if (part === "gpt") return "GPT";
+      if (part === "gemini") return "Gemini";
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(" ");
+}
+
 export function HomePage() {
   const [repo, setRepo] = useState("");
   const [runId, setRunId] = useState<string | null>(null);
@@ -97,6 +110,16 @@ export function HomePage() {
   const [liveGaps, setLiveGaps] = useState<LiveGap[]>([]);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig | null>(
+    null,
+  );
+
+  useEffect(() => {
+    void api
+      .getRuntimeConfig()
+      .then(setRuntimeConfig)
+      .catch(() => undefined);
+  }, []);
 
   const refreshRun = useCallback(async (id: string) => {
     try {
@@ -185,6 +208,9 @@ export function HomePage() {
     <>
       <BrandHeader tagline="Repository activity → reviewed documentation">
         <div className="top-actions">
+          <Link className="showcase-link" to="/showcase">
+            Product tour
+          </Link>
           <Link className="published-link" to="/findings">
             Browse findings →
           </Link>
@@ -237,6 +263,20 @@ export function HomePage() {
                 <span>Live now</span>
                 <span className="hero-trust-sep">·</span>
                 <span>Real repository evidence</span>
+                {runtimeConfig?.llm_primary_model ? (
+                  <>
+                    <span className="hero-trust-sep">·</span>
+                    <span>
+                      {modelLabel(runtimeConfig.llm_primary_model)}
+                      {runtimeConfig.llm_gateway === "merge"
+                        ? " via Merge Gateway"
+                        : ""}
+                      {runtimeConfig.llm_fallback_model
+                        ? ` · ${modelLabel(runtimeConfig.llm_fallback_model)} fallback`
+                        : ""}
+                    </span>
+                  </>
+                ) : null}
               </div>
             </section>
             <HowItWorks />

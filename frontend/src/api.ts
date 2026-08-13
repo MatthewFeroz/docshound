@@ -4,6 +4,7 @@ import type {
   Finding,
   Run,
   RunEvent,
+  RuntimeConfig,
 } from "./types";
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim() ?? "";
@@ -42,6 +43,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getRuntimeConfig: () => request<RuntimeConfig>("/api/v1/config"),
   createRun: (repo: string) =>
     request<CreateRunResponse>("/api/v1/runs", {
       method: "POST",

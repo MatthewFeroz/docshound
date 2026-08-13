@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -93,6 +94,29 @@ class ApiTests(unittest.TestCase):
             preflight.headers["access-control-allow-origin"],
             "http://localhost:5173",
         )
+
+    def test_runtime_config_exposes_models_without_credentials(self) -> None:
+        route = SimpleNamespace(
+            gateway="merge",
+            models=("google/gemini-3.7-flash", "openai/gpt-5.6-luna"),
+        )
+        with (
+            patch("app.main.get_llm_route", return_value=route),
+            patch("app.main.write_enabled", return_value=False),
+        ):
+            response = self.client.get("/api/v1/config")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "write_enabled": False,
+                "llm_gateway": "merge",
+                "llm_primary_model": "google/gemini-3.7-flash",
+                "llm_fallback_model": "openai/gpt-5.6-luna",
+            },
+        )
+        self.assertNotIn("key", response.text.lower())
 
     def test_legacy_run_routes_remain_compatible(self) -> None:
         with patch("app.main.run_agent", new=AsyncMock()):

@@ -7,9 +7,9 @@ from pathlib import PurePosixPath
 from urllib.parse import quote, urlparse
 
 import httpx
-from openai import AsyncOpenAI
 
 from app.config import get_settings
+from app.llm import complete_json, llm_is_configured, require_json_array
 from app.state import DocSource, DocumentationCoverage, GapCluster
 
 
@@ -453,8 +453,7 @@ async def _assess_coverage_with_model(
     clusters: list[GapCluster],
     documents_by_cluster: list[list[RepositoryDocument]],
 ) -> dict[int, dict]:
-    settings = get_settings()
-    if not settings.openai_api_key or not clusters:
+    if not llm_is_configured() or not clusters:
         return {}
     payload = []
     for index, cluster in enumerate(clusters):
@@ -477,11 +476,8 @@ async def _assess_coverage_with_model(
             }
         )
     try:
-        response = await AsyncOpenAI(api_key=settings.openai_api_key).chat.completions.create(
-            model=settings.openai_model,
-            temperature=0,
-            response_format={"type": "json_object"},
-            messages=[
+        completion = await complete_json(
+            [
                 {
                     "role": "system",
                     "content": (
@@ -498,8 +494,12 @@ async def _assess_coverage_with_model(
                 },
                 {"role": "user", "content": json.dumps({"findings": payload})},
             ],
+            validator=require_json_array(
+                "coverage",
+                item_validator=_validate_coverage_item,
+            ),
         )
-        raw = json.loads(response.choices[0].message.content or "{}")
+        raw = completion.value
     except Exception:
         return {}
     assessments: dict[int, dict] = {}
@@ -510,6 +510,23 @@ async def _assess_coverage_with_model(
         if 0 <= index < len(clusters):
             assessments[index] = item
     return assessments
+
+
+def _validate_coverage_item(item: object) -> None:
+    if not isinstance(item, dict) or not isinstance(item.get("index"), int):
+        raise ValueError("Every coverage assessment must contain an integer index")
+    relevant_paths = item.get("relevant_paths", [])
+    if not isinstance(relevant_paths, list) or not all(
+        isinstance(path, str) for path in relevant_paths
+    ):
+        raise ValueError("Coverage relevant_paths must be an array of strings")
+    DocumentationCoverage.model_validate(
+        {
+            key: value
+            for key, value in item.items()
+            if key not in {"index", "relevant_paths"}
+        }
+    )
 
 
 async def _extract_docs_url(

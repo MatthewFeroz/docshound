@@ -131,6 +131,13 @@ export interface CreateRunResponse {
   repo: string;
 }
 
+export interface RuntimeConfig {
+  write_enabled: boolean;
+  llm_gateway: string | null;
+  llm_primary_model: string | null;
+  llm_fallback_model: string | null;
+}
+
 export interface DocumentPayload {
   document: ApprovedDocument;
   body_markdown: string;
