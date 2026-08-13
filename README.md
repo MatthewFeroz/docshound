@@ -1,21 +1,19 @@
 # DocsHound
 
 <p align="center">
-  <img src="app/web/static/logos/docshound-logo.svg" alt="DocsHound" width="180">
+  <img src="frontend/public/logos/docshound-logo.svg" alt="DocsHound" width="180">
 </p>
 
-DocsHound turns open issues and merged pull requests into grounded,
-reviewable documentation updates.
+DocsHound turns open issues and merged pull requests into grounded, reviewable
+documentation updates.
 
-Give it a public repository and it will:
+The project contains two independently deployable applications:
 
-1. Collect recent issues and merged pull requests independently.
-2. Separate unresolved documentation gaps from shipped changes.
-3. Draft Markdown using the linked repository evidence.
-4. Let a human edit and approve the document.
-5. Detect the target documentation layout and prepare Markdown or MDX.
-6. Preview the exact repository patch.
-7. Create a documentation branch, commit, and pull request when write access is connected.
+- `frontend/` — React, TypeScript, and Vite static application
+- `backend/` — FastAPI JSON/SSE API and agent runtime
+
+The browser never receives OpenAI or GitHub credentials. All secrets stay in
+the backend runtime.
 
 ## Product flow
 
@@ -33,127 +31,161 @@ Documentation patch preview
 Documentation pull request
 ```
 
-## Features
-
-- Open-issue and merged-PR analysis with separate collection limits
-- Source validation that removes nonexistent issue and PR references
-- Deterministic, PR-grounded drafts for shipped changes
-- Editable human-review workflow
-- Clean standalone Markdown documents with copy and download controls
-- Repository-aware `.md` and `.mdx` target detection
-- Exact unified-diff preview and `.patch` download
-- Idempotent branch, commit, and pull-request creation
-- Local SQLite persistence for runs, approvals, patches, and PR state
-- Safe preview mode when repository write access is not configured
-
 ## Run locally
 
-Requires Python 3.11 or newer.
+Requires Python 3.11+, Node.js 20.19+ (or 22.12+), and npm.
+
+Set up the backend:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+cd backend
+python3.11 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 cp .env.example .env
+cd ..
+```
+
+Set up the frontend:
+
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+Start both development servers:
+
+```bash
 ./run.sh
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api`
+requests to the backend at `http://127.0.0.1:8000`.
 
-You can also start the server directly:
+You can also run each application independently:
 
 ```bash
-.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+./backend/run.sh
+npm --prefix frontend run dev
 ```
 
-## Configuration
+## Backend configuration
 
-Public repositories work without credentials for small runs. Add these values
-to `.env` as needed:
+Add credentials to `backend/.env` (or a root `.env` for compatibility with
+existing local installations):
 
 ```text
 GITHUB_TOKEN=          # optional: higher read limits
 GITHUB_WRITE_TOKEN=    # optional: create documentation branches and PRs
 OPENAI_API_KEY=        # optional: model-based analysis instead of heuristics
 OPENAI_MODEL=gpt-4o-mini
+ALLOWED_ORIGINS=http://localhost:5173
+DOCSHOUND_DB_PATH=     # optional: explicit shared SQLite path
 ```
 
-For pull-request creation, use a fine-grained write token limited to the target
-documentation repositories with:
+For pull-request creation, use a fine-grained GitHub token limited to the target
+documentation repositories with Contents and Pull requests read/write access.
 
-- Contents: read and write
-- Pull requests: read and write
+## Frontend configuration
 
-Without `GITHUB_WRITE_TOKEN`, DocsHound still provides the complete review,
-repository detection, patch preview, and patch-download workflow.
+`VITE_API_BASE_URL` is the only frontend environment variable. Set it to the
+public backend origin for independent deployments:
 
-## Use the API
+```text
+VITE_API_BASE_URL=https://api.example.com
+```
+
+Values prefixed with `VITE_` are public and embedded in the browser bundle.
+Never place OpenAI or GitHub credentials in the frontend environment.
+
+## Docker
+
+Build and run both applications locally:
+
+```bash
+docker compose up --build
+```
+
+Open [http://localhost:8080](http://localhost:8080). The backend is available at
+`http://localhost:8000`, with persistent SQLite data in a named Docker volume.
+
+Each directory also has its own Dockerfile, so the frontend and backend can be
+built, deployed, scaled, and rolled back separately. Configure the backend's
+`ALLOWED_ORIGINS` with the deployed frontend origin.
+
+## API
+
+The versioned backend API is under `/api/v1`. Interactive OpenAPI documentation
+is available at `http://127.0.0.1:8000/docs`.
 
 Start a run:
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8000/runs \
+curl -sS -X POST http://127.0.0.1:8000/api/v1/runs \
   -H 'Content-Type: application/json' \
-  -d '{"repo":"GoogleCloudPlatform/knowledge-catalog","limit":50,"dry_run":true}'
+  -d '{"repo":"GoogleCloudPlatform/knowledge-catalog","limit":50}'
 ```
 
-Then poll the returned run ID:
+Then fetch its state or subscribe to JSON server-sent events:
 
 ```bash
-curl -sS http://127.0.0.1:8000/runs/<RUN_ID> | jq
+curl -sS http://127.0.0.1:8000/api/v1/runs/<RUN_ID>
+curl -N http://127.0.0.1:8000/api/v1/runs/<RUN_ID>/events
 ```
 
-The browser workflow is usually simpler: enter `owner/repository`, watch the
-analysis complete, open a finding, edit the Markdown, and approve it.
+The API also exposes findings, approval/rejection, approved documents,
+repository patch previews, patch downloads, and pull-request creation.
 
-## Documentation pull requests
-
-After approval, select **Prepare documentation PR** on the standalone document.
-DocsHound inspects the target repository and chooses a destination using common
-documentation conventions:
-
-- `docs.json` or `mint.json` → MDX under an existing documentation directory
-- Docusaurus configuration → MDX under `docs/`
-- MkDocs configuration → Markdown under `docs/`
-- Existing `docs/` or `documentation/` directories → Markdown
-- No detected structure → a new Markdown page under `docs/`
-
-The proposed repository, base branch, new branch, destination file, format, and
-exact patch are shown before anything is written. The repository and path can
-both be changed during review.
+For compatibility with existing integrations, `POST /runs`,
+`GET /runs/{run_id}`, and `GET /runs/{run_id}/events.json` remain available as
+aliases for the original DocsHound API contract. New integrations should use
+the versioned `/api/v1` routes.
 
 ## Persistence
 
-DocsHound stores local application state in `data/docshound.db`. The database is
-ignored by Git and includes:
+The backend stores local application state in `backend/data/docshound.db`. When
+upgrading an existing source checkout, it automatically continues using
+`data/docshound.db` if that legacy database exists and the new path does not.
+No data is copied or deleted. Set `DOCSHOUND_DB_PATH` when a deployment needs an
+explicit shared location.
 
-- completed runs and findings
-- approved document revisions
-- prepared repository patches
-- created pull-request metadata
+The database includes completed runs, findings, approved document revisions,
+prepared patches, and created pull-request metadata.
 
-This lets the findings and review workflow survive server restarts.
+SQLite and the in-process event stream are appropriate for a single backend
+replica. A multi-replica deployment should use shared persistence and event
+delivery before scaling horizontally.
 
 ## Tests
 
+Run backend tests:
+
 ```bash
+cd backend
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-The tests cover Markdown/MDX repository detection, patch generation, the full
-branch → commit → pull-request sequence, and run persistence.
+Run frontend checks:
+
+```bash
+cd frontend
+npm run format:check
+npm run typecheck
+npm test
+npm run build
+```
 
 ## Project structure
 
 ```text
-app/
-  agent.py                 agent execution
-  approved_documents.py    approved Markdown persistence
-  documentation_prs.py     target detection, patches, and PR creation
-  langgraph_agent.py       analysis workflow
-  run_store.py             persistent run storage
-  tools/                    repository research and clustering
-  web/                      templates and static assets
-tests/
-  test_documentation_flow.py
+backend/
+  app/                    FastAPI API, agent, persistence, and integrations
+  tests/                  API and workflow tests
+  Dockerfile
+frontend/
+  src/                    React application and typed API client
+  public/                 DocsHound assets
+  Dockerfile
+docker-compose.yml        Local production-style deployment
+run.sh                    Starts both development servers
 ```

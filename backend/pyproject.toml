@@ -1,0 +1,9 @@
+[project]
+name = "docshound-backend"
+version = "1.0.0"
+description = "FastAPI backend for DocsHound"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["app*"]
