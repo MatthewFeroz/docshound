@@ -89,7 +89,17 @@ class RuntimeConfigResponse(BaseModel):
     llm_fallback_model: str | None = None
     llm_configured: bool
     credential_input_enabled: bool
+    github_configured: bool
+    github_account: str | None = None
+    github_verified_repo: str | None = None
+    github_document_fetch_limit: int
+    github_documents_per_finding: int
 
 
 class LLMCredentialRequest(BaseModel):
     api_key: SecretStr = Field(min_length=1, max_length=4096)
+
+
+class GitHubCredentialRequest(BaseModel):
+    repo: str = Field(min_length=1)
+    api_key: SecretStr | None = Field(default=None, max_length=4096)

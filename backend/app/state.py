@@ -85,6 +85,7 @@ class AgentState(BaseModel):
     pull_requests: list[PullRequest] = Field(default_factory=list)
     clusters: list[GapCluster] = Field(default_factory=list)
     docs_sources: list[DocSource] = Field(default_factory=list)
+    docs_candidates_inspected: int = 0
     next_action: str | None = None
     decisions: list[dict] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
@@ -100,6 +101,7 @@ class RunResponse(BaseModel):
     pull_requests_scraped: int
     clusters_found: int
     docs_sources: list[DocSource] = Field(default_factory=list)
+    docs_candidates_inspected: int = 0
     top_gaps: list[GapCluster]
     decisions: list[dict] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)

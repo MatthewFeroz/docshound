@@ -411,7 +411,7 @@ main {
 }
 .hero-cta-btn:disabled {
   opacity: 0.6;
-  cursor: progress;
+  cursor: not-allowed;
   transform: none;
 }
 .run-idle,
@@ -615,6 +615,253 @@ main {
 }
 .hero-model-feedback.is-error {
   color: var(--high);
+}
+
+.run-readiness {
+  position: relative;
+  z-index: 7;
+  width: 100%;
+  max-width: 580px;
+  margin-top: 16px;
+  overflow: visible;
+  color: var(--muted);
+  background: rgba(13, 16, 23, 0.82);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  font-family: var(--mono);
+  text-align: left;
+  backdrop-filter: blur(16px);
+  animation: heroFade 0.7s 0.22s ease-out both;
+}
+.run-readiness-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 14px 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+.run-readiness-head strong {
+  color: var(--text);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+.run-readiness-head span {
+  color: var(--muted-2);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.readiness-row,
+.readiness-connect > summary {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 49px;
+  padding: 8px 14px;
+}
+.readiness-row + .readiness-row,
+.readiness-row + .readiness-connect,
+.readiness-connect + .readiness-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.045);
+}
+.readiness-connect {
+  position: relative;
+  display: block;
+  min-height: 0;
+  padding: 0;
+}
+.readiness-connect > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.readiness-connect > summary::-webkit-details-marker {
+  display: none;
+}
+.readiness-connect > summary:hover,
+.readiness-connect[open] > summary {
+  background: rgba(255, 255, 255, 0.025);
+}
+.readiness-check {
+  display: inline-grid;
+  width: 21px;
+  height: 21px;
+  place-items: center;
+  color: var(--muted-2);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 750;
+}
+.readiness-row.is-ready .readiness-check {
+  color: #07130e;
+  background: var(--low);
+  border-color: var(--low);
+}
+.readiness-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.readiness-copy strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.readiness-copy small {
+  overflow: hidden;
+  color: var(--muted-2);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.readiness-state,
+.readiness-action {
+  padding: 4px 7px;
+  color: var(--med);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font: 750 8px var(--mono);
+  letter-spacing: 0.07em;
+  text-decoration: none;
+}
+button.readiness-action {
+  cursor: pointer;
+}
+.readiness-row.is-ready .readiness-state,
+.readiness-row.is-ready .readiness-action {
+  color: var(--low);
+}
+.readiness-connect:not(.is-ready) .readiness-action,
+button.readiness-action:hover {
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.035);
+}
+.github-connect-panel {
+  position: absolute;
+  top: calc(100% + 9px);
+  left: 50%;
+  z-index: 20;
+  width: min(390px, calc(100vw - 40px));
+  padding: 17px;
+  transform: translateX(-50%);
+  color: var(--muted);
+  background: rgba(17, 20, 28, 0.99);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(18px);
+}
+.github-connect-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 15px;
+}
+.github-connect-head > div {
+  display: grid;
+  gap: 3px;
+}
+.github-connect-head strong {
+  color: var(--text);
+  font-size: 11px;
+}
+.github-connect-head span {
+  color: var(--muted-2);
+  font-size: 9px;
+  line-height: 1.4;
+}
+.github-depth-badge {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  color: var(--low) !important;
+  background: var(--low-bg);
+  border-radius: 5px;
+  font-size: 8px !important;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+}
+.github-connect-panel label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 650;
+}
+.github-connect-panel input {
+  width: 100%;
+  padding: 10px 11px;
+  color: var(--text);
+  background: #0b0d13;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  font: 11px var(--mono);
+}
+.github-connect-panel input:focus {
+  border-color: rgba(248, 80, 0, 0.65);
+}
+.github-connect-panel input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.github-connect-panel > p {
+  margin: 8px 0 12px;
+  color: var(--muted-2);
+  font-size: 9px;
+  line-height: 1.5;
+}
+.github-depth-note {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 13px;
+  padding: 10px;
+  background: rgba(51, 214, 159, 0.055);
+  border: 1px solid rgba(51, 214, 159, 0.13);
+  border-radius: 8px;
+}
+.github-depth-note strong {
+  color: var(--text);
+  font-size: 9px;
+}
+.github-depth-note span {
+  color: var(--muted-2);
+  font-size: 8px;
+}
+.github-connect-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 9px;
+}
+.github-connect-actions a,
+.github-connect-actions button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font: 650 9px var(--mono);
+  text-decoration: none;
+}
+.github-connect-actions a {
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+}
+.github-connect-actions button {
+  color: white;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  cursor: pointer;
+}
+.github-connect-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 /* agent marks: small ambient tiles inspired by the tools DocsHound can inspect */

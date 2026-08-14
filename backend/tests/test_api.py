@@ -11,6 +11,7 @@ from app import approved_documents, documentation_prs, run_store
 from app.main import app
 from app.runtime_credentials import clear_runtime_credentials
 from app.state import RUNS, AgentState, DocumentationCoverage, GapCluster, Issue
+from app.tools.github import GitHubToolError
 
 
 class ApiTests(unittest.TestCase):
@@ -106,6 +107,13 @@ class ApiTests(unittest.TestCase):
         with (
             patch("app.main.get_llm_route", return_value=route),
             patch("app.main.write_enabled", return_value=False),
+            patch(
+                "app.main.get_settings",
+                return_value=SimpleNamespace(
+                    app_env="development",
+                    github_token=None,
+                ),
+            ),
         ):
             response = self.client.get("/api/v1/config")
 
@@ -119,6 +127,11 @@ class ApiTests(unittest.TestCase):
                 "llm_fallback_model": "openai/gpt-5.6-luna",
                 "llm_configured": True,
                 "credential_input_enabled": True,
+                "github_configured": False,
+                "github_account": None,
+                "github_verified_repo": None,
+                "github_document_fetch_limit": 60,
+                "github_documents_per_finding": 5,
             },
         )
         self.assertNotIn("key", response.text.lower())
@@ -153,6 +166,65 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertIn("disabled in production", response.json()["detail"])
+
+    def test_github_credential_is_verified_and_never_echoed(self) -> None:
+        with (
+            patch(
+                "app.main.get_settings",
+                return_value=SimpleNamespace(
+                    app_env="development",
+                    github_token=None,
+                ),
+            ),
+            patch(
+                "app.main.validate_github_access",
+                new=AsyncMock(return_value=("octocat", "acme/product")),
+            ) as validate,
+            patch("app.main.get_llm_route", return_value=None),
+            patch("app.main.write_enabled", return_value=False),
+        ):
+            response = self.client.post(
+                "/api/v1/config/github-credential",
+                json={
+                    "repo": "https://github.com/acme/product",
+                    "api_key": "github_pat_secret",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["github_configured"])
+        self.assertEqual(response.json()["github_account"], "octocat")
+        self.assertEqual(response.json()["github_verified_repo"], "acme/product")
+        self.assertEqual(response.json()["github_document_fetch_limit"], 60)
+        self.assertEqual(response.json()["github_documents_per_finding"], 5)
+        self.assertNotIn("github_pat_secret", response.text)
+        validate.assert_awaited_once_with("acme/product", "github_pat_secret")
+
+    def test_github_credential_rejects_an_inaccessible_repository(self) -> None:
+        with (
+            patch(
+                "app.main.get_settings",
+                return_value=SimpleNamespace(
+                    app_env="development",
+                    github_token=None,
+                ),
+            ),
+            patch(
+                "app.main.validate_github_access",
+                new=AsyncMock(
+                    side_effect=GitHubToolError(
+                        "Repository not found or inaccessible: acme/private"
+                    )
+                ),
+            ),
+        ):
+            response = self.client.post(
+                "/api/v1/config/github-credential",
+                json={"repo": "acme/private", "api_key": "bad-token"},
+            )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("inaccessible", response.json()["detail"])
 
     def test_legacy_run_routes_remain_compatible(self) -> None:
         with patch("app.main.run_agent", new=AsyncMock()):
