@@ -110,11 +110,19 @@ frontend environment.
 In local development, the homepage readiness checklist can verify a read-only
 GitHub token against the selected repository and the model connection menu can
 send a Merge Gateway key to the backend. These overrides are held only in
-backend process memory and cleared on restart. An authenticated documentation
-search ranks up to ten paths per finding, downloads up to sixty unique pages,
-and assesses the best five pages per finding. Browser credential entry is
-disabled when `APP_ENV` is `production`; production deployments should inject
-`GITHUB_TOKEN` and `MERGE_GATEWAY_API_KEY` through the server's secret manager.
+backend process memory and cleared on restart. DocsHound automatically resolves
+the official documentation repository and folder from repository structure,
+README links, the GitHub homepage, and “Edit this page on GitHub” links. The
+detected source is shown before each run and can be overridden.
+
+For a confirmed documentation root containing at most 100 Markdown or MDX
+pages, an authenticated run reads the complete corpus before ranking the best
+eight pages per finding. Larger roots use a bounded search of up to 100 pages.
+When documentation lives in a separate repository, its issues and merged pull
+requests can also be included as documentation-specific evidence. Browser
+credential entry is disabled when `APP_ENV` is `production`; production
+deployments should inject `GITHUB_TOKEN` and `MERGE_GATEWAY_API_KEY` through the
+server's secret manager.
 
 ### OpenTelemetry and OpenInference tracing
 
@@ -164,6 +172,14 @@ Start a run:
 curl -sS -X POST http://127.0.0.1:8000/api/v1/runs \
   -H 'Content-Type: application/json' \
   -d '{"repo":"GoogleCloudPlatform/knowledge-catalog","limit":50}'
+```
+
+Resolve and confirm documentation sources before a run:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/api/v1/sources/resolve \
+  -H 'Content-Type: application/json' \
+  -d '{"repo":"kubernetes/kubernetes"}'
 ```
 
 Then fetch its state or subscribe to JSON server-sent events:

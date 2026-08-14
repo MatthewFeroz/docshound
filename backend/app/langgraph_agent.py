@@ -1,3 +1,4 @@
+import asyncio
 from typing import Literal, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -5,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from app import events
 from app.llm import complete_json, llm_is_configured
-from app.state import DocSource, GapCluster, Issue, PullRequest
+from app.state import DocumentationSource, DocSource, GapCluster, Issue, PullRequest
 from app.tools.cluster import cluster_issues, draft_review_documents
 from app.tools.docs import search_official_docs
 from app.tools.github import research_pull_requests, research_repo
@@ -25,6 +26,8 @@ class DocsHoundGraphState(TypedDict, total=False):
     run_id: str
     repo: str
     docs_url: str | None
+    documentation_source: dict | None
+    include_documentation_activity: bool
     limit: int
     dry_run: bool
     issues: list[dict]
@@ -32,6 +35,9 @@ class DocsHoundGraphState(TypedDict, total=False):
     clusters: list[dict]
     docs_sources: list[dict]
     docs_candidates_inspected: int
+    documentation_issues_scraped: int
+    documentation_pull_requests_scraped: int
+    warnings: list[str]
     errors: list[str]
     next_action: str
     decision_reason: str
@@ -85,6 +91,7 @@ Rules:
 Current state:
 - repo: {state.get("repo")}
 - docs_url: {state.get("docs_url")}
+- documentation_source: {state.get("documentation_source")}
 - researched: {state.get("researched", False)}
 - analyzed: {state.get("analyzed", False)}
 - docs_searched: {state.get("docs_searched", False)}
@@ -180,26 +187,28 @@ def route(
 
 async def research(state: DocsHoundGraphState) -> DocsHoundGraphState:
     try:
-        issues = await run_traced(
-            "research_repo",
-            state["run_id"],
-            state["repo"],
-            research_repo,
-            state["repo"],
-            state.get("limit", 50),
+        issues, pull_requests = await asyncio.gather(
+            run_traced(
+                "research_repo",
+                state["run_id"],
+                state["repo"],
+                research_repo,
+                state["repo"],
+                state.get("limit", 50),
+            ),
+            run_traced(
+                "research_pull_requests",
+                state["run_id"],
+                state["repo"],
+                research_pull_requests,
+                state["repo"],
+                state.get("limit", 50),
+            ),
         )
         state["issues"] = [issue.model_dump(mode="json") for issue in issues]
         events.publish(
             state["run_id"],
             {"type": "issues_fetched", "count": len(issues)},
-        )
-        pull_requests = await run_traced(
-            "research_pull_requests",
-            state["run_id"],
-            state["repo"],
-            research_pull_requests,
-            state["repo"],
-            state.get("limit", 50),
         )
         state["pull_requests"] = [
             pull_request.model_dump(mode="json")
@@ -209,6 +218,74 @@ async def research(state: DocsHoundGraphState) -> DocsHoundGraphState:
             state["run_id"],
             {"type": "pull_requests_fetched", "count": len(pull_requests)},
         )
+
+        source_payload = state.get("documentation_source")
+        source = (
+            DocumentationSource.model_validate(source_payload)
+            if source_payload
+            else None
+        )
+        docs_repo = source.repo if source and source.kind == "github" else None
+        if (
+            state.get("include_documentation_activity", True)
+            and docs_repo
+            and docs_repo.lower() != state["repo"].lower()
+        ):
+            try:
+                docs_limit = min(state.get("limit", 50), 25)
+                docs_issues, docs_pull_requests = await asyncio.gather(
+                    run_traced(
+                        "research_documentation_issues",
+                        state["run_id"],
+                        docs_repo,
+                        research_repo,
+                        docs_repo,
+                        docs_limit,
+                    ),
+                    run_traced(
+                        "research_documentation_pull_requests",
+                        state["run_id"],
+                        docs_repo,
+                        research_pull_requests,
+                        docs_repo,
+                        docs_limit,
+                        True,
+                    ),
+                )
+                state["issues"].extend(
+                    issue.model_dump(mode="json") for issue in docs_issues
+                )
+                state["pull_requests"].extend(
+                    pull_request.model_dump(mode="json")
+                    for pull_request in docs_pull_requests
+                )
+                state["documentation_issues_scraped"] = len(docs_issues)
+                state["documentation_pull_requests_scraped"] = len(
+                    docs_pull_requests
+                )
+                events.publish(
+                    state["run_id"],
+                    {
+                        "type": "documentation_activity_fetched",
+                        "repo": docs_repo,
+                        "issues_count": len(docs_issues),
+                        "pull_requests_count": len(docs_pull_requests),
+                    },
+                )
+            except Exception as exc:
+                warning = (
+                    f"Documentation activity could not be fetched from "
+                    f"{docs_repo}: {exc}"
+                )
+                state.setdefault("warnings", []).append(warning)
+                events.publish(
+                    state["run_id"],
+                    {
+                        "type": "documentation_activity_warning",
+                        "repo": docs_repo,
+                        "error": str(exc),
+                    },
+                )
     except Exception as exc:
         state.setdefault("errors", []).append(str(exc))
     finally:
@@ -230,6 +307,7 @@ async def analyze(state: DocsHoundGraphState) -> DocsHoundGraphState:
             cluster_issues,
             issues,
             pull_requests,
+            state["repo"],
         )
         cluster_dicts = [cluster.model_dump(mode="json") for cluster in clusters]
         state["clusters"] = cluster_dicts
@@ -254,6 +332,17 @@ async def search_docs(state: DocsHoundGraphState) -> DocsHoundGraphState:
             state["repo"],
             state.get("docs_url"),
             clusters,
+            documentation_source=(
+                DocumentationSource.model_validate(
+                    state["documentation_source"]
+                )
+                if state.get("documentation_source")
+                else None
+            ),
+            activity_pull_requests=[
+                PullRequest.model_validate(pull_request)
+                for pull_request in state.get("pull_requests", [])
+            ],
         )
         source_dicts = [source.model_dump(mode="json") for source in sources]
         state["clusters"] = [

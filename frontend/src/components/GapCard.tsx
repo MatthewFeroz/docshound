@@ -17,7 +17,9 @@ export function GapCard({
   onReject,
   rejecting,
 }: GapCardProps) {
-  const sourceCount = cluster.issue_numbers.length + cluster.pr_numbers.length;
+  const sourceCount =
+    (cluster.issue_refs.length || cluster.issue_numbers.length) +
+    (cluster.pr_refs.length || cluster.pr_numbers.length);
   return (
     <article className={`gap-card sev-${cluster.severity}`}>
       <header className="gap-head">

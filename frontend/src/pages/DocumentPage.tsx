@@ -24,7 +24,9 @@ export function DocumentPage() {
       .then((loaded) => {
         setPayload(loaded);
         setTargetRepo(
-          loaded.documentation_change?.target_repo || loaded.document.repo,
+          loaded.documentation_change?.target_repo ||
+            loaded.suggested_target_repo ||
+            loaded.document.repo,
         );
         setFilePath(
           loaded.documentation_change?.file_path ||
@@ -160,8 +162,9 @@ export function DocumentPage() {
                   href={source.url}
                   target="_blank"
                   rel="noreferrer"
-                  key={`${source.kind}-${source.number}`}
+                  key={`${source.repo}-${source.kind}-${source.number}`}
                 >
+                  {source.repo ? `${source.repo} · ` : ""}
                   {source.kind === "pull_request" ? "Merged PR" : "Issue"} #
                   {source.number} {source.title}
                 </a>

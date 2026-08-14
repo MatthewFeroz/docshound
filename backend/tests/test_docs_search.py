@@ -1,12 +1,18 @@
 import base64
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
 
 from app.langgraph_agent import _safe_next_action, llm_decide
-from app.state import DocumentationCoverage, GapCluster
+from app.state import (
+    DocumentationCoverage,
+    DocumentationSource,
+    GapCluster,
+    PullRequest,
+)
 from app.tools.cluster import draft_review_documents
 from app.tools.docs import search_official_docs
 
@@ -18,6 +24,8 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
         cluster: GapCluster,
         *,
         authenticated: bool = False,
+        documentation_source: DocumentationSource | None = None,
+        activity_pull_requests: list[PullRequest] | None = None,
     ) -> tuple[list[GapCluster], list[str], list[str], int]:
         requested_paths: list[str] = []
 
@@ -65,6 +73,8 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
                     "acme/opencode",
                     None,
                     [cluster],
+                    documentation_source=documentation_source,
+                    activity_pull_requests=activity_pull_requests,
                     client=client,
                 )
         return (
@@ -248,9 +258,46 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
             authenticated=True,
         )
 
-        self.assertEqual(len(requested_paths), 10)
-        self.assertEqual(len(sources), 5)
-        self.assertEqual(inspected_count, 10)
+        self.assertEqual(len(requested_paths), 14)
+        self.assertEqual(len(sources), 8)
+        self.assertEqual(inspected_count, 14)
+
+    async def test_confirmed_small_docs_root_reads_the_complete_corpus(self) -> None:
+        pages = {
+            **{
+                f"packages/coding-agent/docs/page-{index}.md": (
+                    f"# Page {index}\n\nOfficial user guide content for topic {index}."
+                )
+                for index in range(30)
+            },
+            "packages/internal/README.md": "# Internal architecture",
+        }
+        cluster = GapCluster(
+            name="Terminal session recovery",
+            summary="Users need session recovery guidance.",
+            recurring_question="How can a terminal session be recovered?",
+            issue_numbers=[12],
+            severity="medium",
+            confidence=0.8,
+        )
+        source = DocumentationSource(
+            repo="acme/opencode",
+            root="packages/coding-agent/docs",
+            confidence=0.97,
+            discovered_by="readme_docs_link",
+            page_count=30,
+        )
+
+        _clusters, requested_paths, _sources, inspected_count = await self._search_pages(
+            pages,
+            cluster,
+            authenticated=True,
+            documentation_source=source,
+        )
+
+        self.assertEqual(inspected_count, 30)
+        self.assertEqual(len(requested_paths), 30)
+        self.assertNotIn("packages/internal/README.md", requested_paths)
 
     async def test_documented_finding_is_kept_without_creating_a_draft(self) -> None:
         cluster = GapCluster(
@@ -271,6 +318,52 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(drafted[0].review_status, "no_change_needed")
         self.assertIsNone(drafted[0].draft_markdown)
+
+    async def test_open_docs_pull_request_marks_finding_in_progress(self) -> None:
+        source = DocumentationSource(
+            repo="acme/opencode",
+            root="docs",
+            confidence=0.99,
+            discovered_by="edit_on_github",
+            page_count=1,
+        )
+        cluster = GapCluster(
+            name="Authentication setup",
+            summary="Token setup may need documentation.",
+            recurring_question="How do I configure a token?",
+            issue_numbers=[12],
+            pr_numbers=[55],
+            pr_refs=["acme/opencode#55"],
+            severity="medium",
+            confidence=0.9,
+        )
+        now = datetime.now(timezone.utc)
+        pull_request = PullRequest(
+            number=55,
+            title="docs: add authentication guide",
+            body="Adds the missing token setup steps.",
+            url="https://github.com/acme/opencode/pull/55",
+            state="open",
+            created_at=now,
+            updated_at=now,
+            source_repo="acme/opencode",
+        )
+
+        clusters, _paths, _sources, _count = await self._search_pages(
+            {"docs/overview.md": "# Overview\n\nGeneral product overview."},
+            cluster,
+            authenticated=True,
+            documentation_source=source,
+            activity_pull_requests=[pull_request],
+        )
+
+        coverage = clusters[0].documentation_coverage
+        self.assertEqual(coverage.status, "in_progress")
+        self.assertEqual(coverage.recommended_action, "no_change")
+        self.assertEqual(
+            coverage.relevant_sources[0].source_type,
+            "documentation_pull_request",
+        )
 
 
 class WorkflowOrderingTests(unittest.TestCase):

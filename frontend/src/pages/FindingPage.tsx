@@ -85,6 +85,7 @@ export function FindingPage() {
         missing: "No matching page found",
         partial: "Related page needs an update",
         documented: "Already documented",
+        in_progress: "Documentation update in progress",
         unable_to_verify: "Coverage needs verification",
       }[coverage.status]
     : "Coverage unavailable";
@@ -201,12 +202,13 @@ export function FindingPage() {
             {finding.source_issues.length ? (
               <ul className="source-list">
                 {finding.source_issues.map((issue) => (
-                  <li key={issue.number}>
+                  <li key={`${issue.source_repo}-${issue.number}`}>
                     <a href={issue.url} target="_blank" rel="noreferrer">
                       #{issue.number} {issue.title}
                     </a>
                     <span>
-                      {issue.state} · {issue.comments_count} comments
+                      {issue.source_repo || finding.repo} · {issue.state} ·{" "}
+                      {issue.comments_count} comments
                     </span>
                   </li>
                 ))}
@@ -215,11 +217,18 @@ export function FindingPage() {
             {finding.source_pull_requests.length ? (
               <ul className="source-list">
                 {finding.source_pull_requests.map((pullRequest) => (
-                  <li key={pullRequest.number}>
+                  <li key={`${pullRequest.source_repo}-${pullRequest.number}`}>
                     <a href={pullRequest.url} target="_blank" rel="noreferrer">
-                      Merged PR #{pullRequest.number} {pullRequest.title}
+                      {pullRequest.merged_at ? "Merged PR" : "Open PR"} #
+                      {pullRequest.number} {pullRequest.title}
                     </a>
-                    <span>merged {pullRequest.merged_at.slice(0, 10)}</span>
+                    <span>
+                      {pullRequest.source_repo || finding.repo} ·{" "}
+                      {pullRequest.state}{" "}
+                      {pullRequest.merged_at
+                        ? pullRequest.merged_at.slice(0, 10)
+                        : "now"}
+                    </span>
                   </li>
                 ))}
               </ul>

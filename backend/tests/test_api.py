@@ -10,7 +10,15 @@ from fastapi.testclient import TestClient
 from app import approved_documents, documentation_prs, run_store
 from app.main import app
 from app.runtime_credentials import clear_runtime_credentials
-from app.state import RUNS, AgentState, DocumentationCoverage, GapCluster, Issue
+from app.source_resolver import ResolvedDocumentationSources
+from app.state import (
+    RUNS,
+    AgentState,
+    DocumentationCoverage,
+    DocumentationSource,
+    GapCluster,
+    Issue,
+)
 from app.tools.github import GitHubToolError
 
 
@@ -130,8 +138,8 @@ class ApiTests(unittest.TestCase):
                 "github_configured": False,
                 "github_account": None,
                 "github_verified_repo": None,
-                "github_document_fetch_limit": 60,
-                "github_documents_per_finding": 5,
+                "github_document_fetch_limit": 100,
+                "github_documents_per_finding": 8,
             },
         )
         self.assertNotIn("key", response.text.lower())
@@ -195,8 +203,8 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(response.json()["github_configured"])
         self.assertEqual(response.json()["github_account"], "octocat")
         self.assertEqual(response.json()["github_verified_repo"], "acme/product")
-        self.assertEqual(response.json()["github_document_fetch_limit"], 60)
-        self.assertEqual(response.json()["github_documents_per_finding"], 5)
+        self.assertEqual(response.json()["github_document_fetch_limit"], 100)
+        self.assertEqual(response.json()["github_documents_per_finding"], 8)
         self.assertNotIn("github_pat_secret", response.text)
         validate.assert_awaited_once_with("acme/product", "github_pat_secret")
 
@@ -247,6 +255,70 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(events.status_code, 200)
         self.assertIn("event: run_completed", events.text)
         self.assertIn('"status": "completed"', events.text)
+
+    def test_source_resolution_contract_exposes_repo_root_and_activity(self) -> None:
+        source = DocumentationSource(
+            repo="acme/docs",
+            root="content/en/docs",
+            url="https://docs.acme.dev",
+            confidence=0.99,
+            discovered_by="edit_on_github",
+            page_count=42,
+        )
+        resolution = ResolvedDocumentationSources(
+            product_repo="acme/product",
+            documentation_sources=[source],
+            selected_source=source,
+            documentation_activity_repos=["acme/docs"],
+        )
+        with patch(
+            "app.main.resolve_documentation_sources",
+            new=AsyncMock(return_value=resolution),
+        ):
+            response = self.client.post(
+                "/api/v1/sources/resolve",
+                json={"repo": "https://github.com/acme/product"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["selected_source"]["repo"], "acme/docs")
+        self.assertEqual(
+            response.json()["selected_source"]["root"], "content/en/docs"
+        )
+        self.assertEqual(
+            response.json()["documentation_activity_repos"], ["acme/docs"]
+        )
+
+    def test_run_accepts_confirmed_documentation_source(self) -> None:
+        source = DocumentationSource(
+            repo="acme/docs",
+            root="docs",
+            confidence=1,
+            discovered_by="user_override",
+            page_count=12,
+        )
+        with (
+            patch(
+                "app.main.enrich_documentation_source",
+                new=AsyncMock(return_value=source),
+            ),
+            patch("app.main.run_agent", new=AsyncMock()),
+        ):
+            response = self.client.post(
+                "/api/v1/runs",
+                json={
+                    "repo": "acme/product",
+                    "documentation_source": source.model_dump(mode="json"),
+                    "include_documentation_activity": True,
+                    "dry_run": False,
+                },
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["documentation_source"]["repo"], "acme/docs")
+        state = RUNS[response.json()["run_id"]]
+        self.assertEqual(state.documentation_source.root, "docs")
+        self.assertTrue(state.include_documentation_activity)
 
     def test_finding_review_contract(self) -> None:
         state = self._seed_run()

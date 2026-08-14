@@ -82,7 +82,10 @@ export function FindingsPage() {
                         : "Open gap"}
                     </span>
                     <span>
-                      {cluster.issue_numbers.length + cluster.pr_numbers.length}{" "}
+                      {(cluster.issue_refs.length ||
+                        cluster.issue_numbers.length) +
+                        (cluster.pr_refs.length ||
+                          cluster.pr_numbers.length)}{" "}
                       sources
                     </span>
                   </div>

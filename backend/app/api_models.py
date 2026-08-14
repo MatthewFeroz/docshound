@@ -1,11 +1,13 @@
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from app.state import GapCluster, Issue, PullRequest
+from app.state import DocumentationSource, GapCluster, Issue, PullRequest
 
 
 class CreateRunRequest(BaseModel):
     repo: str = Field(min_length=1)
     docs_url: str | None = None
+    documentation_source: DocumentationSource | None = None
+    include_documentation_activity: bool = True
     limit: int = Field(default=50, ge=1, le=100)
     dry_run: bool = False
 
@@ -14,6 +16,18 @@ class CreateRunResponse(BaseModel):
     run_id: str
     status: str
     repo: str
+    documentation_source: DocumentationSource | None = None
+
+
+class ResolveSourcesRequest(BaseModel):
+    repo: str = Field(min_length=1)
+
+
+class ResolveSourcesResponse(BaseModel):
+    product_repo: str
+    documentation_sources: list[DocumentationSource]
+    selected_source: DocumentationSource
+    documentation_activity_repos: list[str]
 
 
 class ApprovedDocumentResponse(BaseModel):
@@ -79,6 +93,7 @@ class DocumentResponse(BaseModel):
     documentation_change: DocumentationChangeResponse | None = None
     suggested_file_path: str | None = None
     suggested_action: str | None = None
+    suggested_target_repo: str | None = None
     write_enabled: bool
 
 

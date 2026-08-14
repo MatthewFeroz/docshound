@@ -662,6 +662,7 @@ main {
 }
 .readiness-row + .readiness-row,
 .readiness-row + .readiness-connect,
+.readiness-connect + .readiness-connect,
 .readiness-connect + .readiness-row {
   border-top: 1px solid rgba(255, 255, 255, 0.045);
 }
@@ -802,6 +803,16 @@ button.readiness-action:hover {
   outline: none;
   font: 11px var(--mono);
 }
+.github-connect-panel select {
+  width: 100%;
+  padding: 10px 11px;
+  color: var(--text);
+  background: #0b0d13;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  font: 10px var(--mono);
+}
 .github-connect-panel input:focus {
   border-color: rgba(248, 80, 0, 0.65);
 }
@@ -814,23 +825,6 @@ button.readiness-action:hover {
   color: var(--muted-2);
   font-size: 9px;
   line-height: 1.5;
-}
-.github-depth-note {
-  display: grid;
-  gap: 3px;
-  margin-bottom: 13px;
-  padding: 10px;
-  background: rgba(51, 214, 159, 0.055);
-  border: 1px solid rgba(51, 214, 159, 0.13);
-  border-radius: 8px;
-}
-.github-depth-note strong {
-  color: var(--text);
-  font-size: 9px;
-}
-.github-depth-note span {
-  color: var(--muted-2);
-  font-size: 8px;
 }
 .github-connect-actions {
   display: grid;
@@ -862,6 +856,105 @@ button.readiness-action:hover {
 .github-connect-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+.docs-source-panel {
+  width: min(470px, calc(100vw - 40px));
+}
+.docs-source-current {
+  align-items: center;
+  background: rgba(52, 211, 153, 0.055);
+  border: 1px solid rgba(52, 211, 153, 0.2);
+  border-radius: 9px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 13px;
+  padding: 11px;
+}
+.docs-source-current > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.docs-source-current strong {
+  color: var(--text);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.docs-source-current span {
+  color: var(--muted-2);
+  font-size: 8px;
+}
+.docs-source-current a {
+  color: var(--low);
+  flex: 0 0 auto;
+  font-size: 9px;
+  text-decoration: none;
+}
+.docs-source-choice {
+  display: grid !important;
+  gap: 6px;
+}
+.docs-activity-toggle {
+  align-items: center;
+  border-bottom: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border-soft);
+  cursor: pointer;
+  display: flex !important;
+  gap: 9px;
+  margin: 13px 0 !important;
+  padding: 11px 0;
+}
+.docs-activity-toggle input {
+  accent-color: var(--low);
+  height: 14px;
+  padding: 0;
+  width: 14px;
+}
+.docs-activity-toggle span {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+.docs-activity-note {
+  border-bottom: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border-soft);
+  margin: 13px 0 !important;
+  padding: 10px 0;
+}
+.docs-source-change {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: 650 9px var(--mono);
+  padding: 0;
+}
+.docs-source-override {
+  border-top: 1px solid var(--border-soft);
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.docs-source-override label {
+  margin: 3px 0 0;
+}
+.docs-source-override label span {
+  color: var(--muted-2);
+  font-weight: 400;
+}
+.docs-source-override button {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  font: 650 9px var(--mono);
+  justify-self: end;
+  margin-top: 4px;
+  padding: 8px 12px;
 }
 
 /* agent marks: small ambient tiles inspired by the tools DocsHound can inspect */
@@ -1414,6 +1507,33 @@ button.readiness-action:hover {
   padding: 2px 6px;
   border-radius: 4px;
 }
+.run-depth-summary {
+  border-bottom: 1px solid var(--border-soft);
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.run-depth-summary div {
+  background: rgba(255, 255, 255, 0.018);
+  display: grid;
+  gap: 4px;
+  padding: 11px 13px;
+}
+.run-depth-summary span {
+  color: var(--muted-2);
+  font: 8px var(--mono);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.run-depth-summary strong {
+  color: var(--text);
+  font: 650 9px var(--mono);
+}
+@media (max-width: 520px) {
+  .run-depth-summary {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* ---------- timeline ---------- */
 .timeline {
@@ -1910,7 +2030,8 @@ button.readiness-action:hover {
   padding: 5px 9px;
   text-transform: uppercase;
 }
-.coverage-documented {
+.coverage-documented,
+.coverage-in_progress {
   border-color: rgba(52, 211, 153, 0.35);
   color: var(--ok);
 }

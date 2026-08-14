@@ -10,7 +10,14 @@ import { Link } from "react-router-dom";
 import { api, subscribeToRun } from "../api";
 import { BrandHeader } from "../components/BrandHeader";
 import { GapCard } from "../components/GapCard";
-import type { GapCluster, Run, RunEvent, RuntimeConfig } from "../types";
+import type {
+  DocumentationSource,
+  GapCluster,
+  Run,
+  RunEvent,
+  RuntimeConfig,
+  SourceResolution,
+} from "../types";
 
 interface TimelineItem {
   id: string;
@@ -68,6 +75,14 @@ function presentEvent(event: RunEvent, sequence: number): TimelineItem {
         icon: "✓",
         kind: "success",
         label: `${event.count || 0} merged pull requests fetched`,
+      };
+    case "documentation_activity_fetched":
+      return {
+        ...base,
+        icon: "◎",
+        kind: "success",
+        label: `Documentation-repository activity fetched`,
+        detail: `${event.repo} · ${event.issues_count || 0} issues · ${event.pull_requests_count || 0} merged PRs`,
       };
     case "docs_sources_found":
       return {
@@ -129,6 +144,11 @@ function repositorySlug(value: string): string | null {
   return `${owner}/${repository}`;
 }
 
+function documentationSourceLabel(source: DocumentationSource): string {
+  if (source.kind === "website") return source.url || "Documentation website";
+  return [source.repo, source.root].filter(Boolean).join(" / ");
+}
+
 export function HomePage() {
   const [repo, setRepo] = useState("");
   const [runId, setRunId] = useState<string | null>(null);
@@ -150,6 +170,17 @@ export function HomePage() {
   const [savingGitHubKey, setSavingGitHubKey] = useState(false);
   const [githubKeyMessage, setGitHubKeyMessage] = useState<string | null>(null);
   const [githubKeyError, setGitHubKeyError] = useState<string | null>(null);
+  const [sourceResolution, setSourceResolution] =
+    useState<SourceResolution | null>(null);
+  const [documentationSource, setDocumentationSource] =
+    useState<DocumentationSource | null>(null);
+  const [resolvingSources, setResolvingSources] = useState(false);
+  const [sourceError, setSourceError] = useState<string | null>(null);
+  const [showSourceOverride, setShowSourceOverride] = useState(false);
+  const [overrideRepo, setOverrideRepo] = useState("");
+  const [overrideRoot, setOverrideRoot] = useState("");
+  const [includeDocumentationActivity, setIncludeDocumentationActivity] =
+    useState(true);
 
   useEffect(() => {
     void api
@@ -282,10 +313,18 @@ export function HomePage() {
       setError("Connect the model before starting.");
       return;
     }
+    if (!documentationSource) {
+      setError("Confirm the official documentation source before starting.");
+      return;
+    }
     setStarting(true);
     setError(null);
     try {
-      const created = await api.createRun(repo);
+      const created = await api.createRun(
+        repo,
+        documentationSource,
+        includeDocumentationActivity,
+      );
       setRunId(created.run_id);
       setRun(null);
       setLiveGaps([]);
@@ -295,7 +334,7 @@ export function HomePage() {
           icon: "●",
           kind: "system",
           label: "Run started. Collecting issues and merged pull requests…",
-          detail: `repo ${created.repo}`,
+          detail: `activity ${created.repo} · docs ${documentationSourceLabel(documentationSource)}`,
         },
       ]);
       await refreshRun(created.run_id);
@@ -323,10 +362,79 @@ export function HomePage() {
       selectedRepo.toLowerCase(),
   );
   const modelReady = Boolean(runtimeConfig?.llm_configured);
-  const readinessCount = [repoReady, githubReady, modelReady].filter(
-    Boolean,
-  ).length;
-  const readyToRun = readinessCount === 3;
+  const documentationReady = documentationSource !== null;
+  const readinessCount = [
+    repoReady,
+    githubReady,
+    documentationReady,
+    modelReady,
+  ].filter(Boolean).length;
+  const readyToRun = readinessCount === 4;
+
+  useEffect(() => {
+    if (!githubReady || !selectedRepo) {
+      setSourceResolution(null);
+      setDocumentationSource(null);
+      setSourceError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setResolvingSources(true);
+    setSourceError(null);
+    void api
+      .resolveSources(selectedRepo)
+      .then((resolution) => {
+        if (cancelled) return;
+        setSourceResolution(resolution);
+        setDocumentationSource(resolution.selected_source);
+        setOverrideRepo(resolution.selected_source.repo || "");
+        setOverrideRoot(resolution.selected_source.root || "");
+      })
+      .catch((requestError: unknown) => {
+        if (cancelled) return;
+        setSourceResolution(null);
+        setDocumentationSource(null);
+        setSourceError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Could not discover the documentation source.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setResolvingSources(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [githubReady, selectedRepo]);
+
+  function applyDocumentationOverride(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const selectedDocsRepo = repositorySlug(overrideRepo);
+    if (!selectedDocsRepo) {
+      setSourceError("Enter a documentation repository as owner/repository.");
+      return;
+    }
+    const root = overrideRoot.trim().replace(/^\/+|\/+$/g, "");
+    if (root.split("/").some((part) => part === "." || part === "..")) {
+      setSourceError(
+        "The documentation folder cannot contain . or .. segments.",
+      );
+      return;
+    }
+    setDocumentationSource({
+      kind: "github",
+      repo: selectedDocsRepo,
+      root: root || null,
+      url: null,
+      confidence: 1,
+      discovered_by: "user_override",
+      page_count: null,
+    });
+    setSourceError(null);
+    setShowSourceOverride(false);
+  }
 
   return (
     <>
@@ -442,7 +550,7 @@ export function HomePage() {
               >
                 <div className="run-readiness-head">
                   <strong>Ready to run</strong>
-                  <span>{readinessCount} of 3 ready</span>
+                  <span>{readinessCount} of 4 ready</span>
                 </div>
                 <div className={`readiness-row ${repoReady ? "is-ready" : ""}`}>
                   <span className="readiness-check" aria-hidden="true">
@@ -527,16 +635,6 @@ export function HomePage() {
                       your local backend, held only in memory, and never
                       returned to the browser.
                     </p>
-                    <div className="github-depth-note">
-                      <strong>
-                        Up to {runtimeConfig?.github_document_fetch_limit || 60}{" "}
-                        documents
-                      </strong>
-                      <span>
-                        Best {runtimeConfig?.github_documents_per_finding || 5}{" "}
-                        pages assessed per finding
-                      </span>
-                    </div>
                     {runtimeConfig?.credential_input_enabled === false ? (
                       <div
                         className="hero-model-feedback is-error"
@@ -585,11 +683,190 @@ export function HomePage() {
                     </div>
                   </form>
                 </details>
+                <details
+                  className={`readiness-row readiness-connect documentation-connect ${
+                    documentationReady ? "is-ready" : ""
+                  }`}
+                >
+                  <summary>
+                    <span className="readiness-check" aria-hidden="true">
+                      {documentationReady ? "✓" : "3"}
+                    </span>
+                    <span className="readiness-copy">
+                      <strong>Official documentation</strong>
+                      <small>
+                        {resolvingSources
+                          ? "Discovering the canonical docs repo and folder…"
+                          : documentationSource
+                            ? `${documentationSourceLabel(documentationSource)}${
+                                documentationSource.page_count !== null
+                                  ? ` · ${documentationSource.page_count} pages`
+                                  : ""
+                              }`
+                            : githubReady
+                              ? "Open to retry or choose a source"
+                              : "Connect GitHub to discover it automatically"}
+                      </small>
+                    </span>
+                    <span className="readiness-action">
+                      {resolvingSources
+                        ? "FINDING"
+                        : documentationReady
+                          ? "REVIEW"
+                          : "REQUIRED"}
+                    </span>
+                  </summary>
+                  <div className="github-connect-panel docs-source-panel">
+                    <div className="github-connect-head">
+                      <div>
+                        <strong>Documentation source</strong>
+                        <span>
+                          Confirm where DocsHound reads pages and documentation
+                          activity.
+                        </span>
+                      </div>
+                      <span className="github-depth-badge">AUTO-DETECTED</span>
+                    </div>
+                    {documentationSource ? (
+                      <div className="docs-source-current">
+                        <div>
+                          <strong>
+                            {documentationSourceLabel(documentationSource)}
+                          </strong>
+                          <span>
+                            {documentationSource.page_count ?? "Uncounted"}{" "}
+                            pages ·{" "}
+                            {documentationSource.discovered_by.replaceAll(
+                              "_",
+                              " ",
+                            )}
+                          </span>
+                        </div>
+                        {documentationSource.url ? (
+                          <a
+                            href={documentationSource.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open ↗
+                          </a>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {sourceResolution?.documentation_sources.length ? (
+                      <label className="docs-source-choice">
+                        Detected source
+                        <select
+                          value={sourceResolution.documentation_sources.findIndex(
+                            (source) =>
+                              source.repo === documentationSource?.repo &&
+                              source.root === documentationSource?.root,
+                          )}
+                          onChange={(event) => {
+                            const source =
+                              sourceResolution.documentation_sources[
+                                Number(event.target.value)
+                              ];
+                            if (source) {
+                              setDocumentationSource(source);
+                              setOverrideRepo(source.repo || "");
+                              setOverrideRoot(source.root || "");
+                            }
+                          }}
+                        >
+                          {sourceResolution.documentation_sources.map(
+                            (source, index) => (
+                              <option
+                                value={index}
+                                key={`${source.repo}-${source.root}`}
+                              >
+                                {documentationSourceLabel(source)} ·{" "}
+                                {source.page_count} pages
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      </label>
+                    ) : null}
+                    {documentationSource?.repo &&
+                    documentationSource.repo.toLowerCase() !==
+                      selectedRepo?.toLowerCase() ? (
+                      <label className="docs-activity-toggle">
+                        <input
+                          type="checkbox"
+                          checked={includeDocumentationActivity}
+                          onChange={(event) =>
+                            setIncludeDocumentationActivity(
+                              event.target.checked,
+                            )
+                          }
+                        />
+                        <span>
+                          Also analyze issues and merged PRs from{" "}
+                          {documentationSource.repo}
+                        </span>
+                      </label>
+                    ) : (
+                      <p className="docs-activity-note">
+                        Documentation activity is already included because the
+                        pages live in the product repository.
+                      </p>
+                    )}
+                    <button
+                      className="docs-source-change"
+                      type="button"
+                      onClick={() =>
+                        setShowSourceOverride((current) => !current)
+                      }
+                    >
+                      {showSourceOverride ? "Cancel override" : "Change source"}
+                    </button>
+                    {showSourceOverride ? (
+                      <form
+                        className="docs-source-override"
+                        onSubmit={applyDocumentationOverride}
+                      >
+                        <label htmlFor="documentation-repo">
+                          Documentation repository
+                        </label>
+                        <input
+                          id="documentation-repo"
+                          value={overrideRepo}
+                          onChange={(event) =>
+                            setOverrideRepo(event.target.value)
+                          }
+                          placeholder="owner/documentation-repo"
+                          required
+                        />
+                        <label htmlFor="documentation-root">
+                          Documentation folder <span>optional</span>
+                        </label>
+                        <input
+                          id="documentation-root"
+                          value={overrideRoot}
+                          onChange={(event) =>
+                            setOverrideRoot(event.target.value)
+                          }
+                          placeholder="content/en/docs"
+                        />
+                        <button type="submit">Use this source</button>
+                      </form>
+                    ) : null}
+                    {sourceError ? (
+                      <div
+                        className="hero-model-feedback is-error"
+                        role="alert"
+                      >
+                        {sourceError}
+                      </div>
+                    ) : null}
+                  </div>
+                </details>
                 <div
                   className={`readiness-row ${modelReady ? "is-ready" : ""}`}
                 >
                   <span className="readiness-check" aria-hidden="true">
-                    {modelReady ? "✓" : "3"}
+                    {modelReady ? "✓" : "4"}
                   </span>
                   <span className="readiness-copy">
                     <strong>Model connection</strong>
@@ -789,6 +1066,40 @@ export function HomePage() {
                   run <code>{runId.slice(0, 8)}</code>
                 </span>
               </header>
+              {run?.documentation_source ? (
+                <div className="run-depth-summary">
+                  <div>
+                    <span>Product activity</span>
+                    <strong>
+                      {Math.max(
+                        0,
+                        run.issues_scraped - run.documentation_issues_scraped,
+                      )}{" "}
+                      issues ·{" "}
+                      {Math.max(
+                        0,
+                        run.pull_requests_scraped -
+                          run.documentation_pull_requests_scraped,
+                      )}{" "}
+                      PRs
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Official docs</span>
+                    <strong>
+                      {run.docs_candidates_inspected} of{" "}
+                      {run.documentation_source.page_count ?? "?"} pages read
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Docs activity</span>
+                    <strong>
+                      {run.documentation_issues_scraped} issues ·{" "}
+                      {run.documentation_pull_requests_scraped} PRs
+                    </strong>
+                  </div>
+                </div>
+              ) : null}
               <ol className="timeline">
                 {events.map((item) => (
                   <li key={item.id} className={`event kind-${item.kind}`}>

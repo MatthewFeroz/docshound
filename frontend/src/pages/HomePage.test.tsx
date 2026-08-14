@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   createRun: vi.fn(),
   getRuntimeConfig: vi.fn(),
   getRun: vi.fn(),
+  resolveSources: vi.fn(),
   setGitHubApiKey: vi.fn(),
   setMergeGatewayApiKey: vi.fn(),
   eventHandler: undefined as ((event: unknown) => void) | undefined,
@@ -24,6 +25,7 @@ vi.mock("../api", () => ({
     createRun: mocks.createRun,
     getRuntimeConfig: mocks.getRuntimeConfig,
     getRun: mocks.getRun,
+    resolveSources: mocks.resolveSources,
     setGitHubApiKey: mocks.setGitHubApiKey,
     setMergeGatewayApiKey: mocks.setMergeGatewayApiKey,
   },
@@ -38,13 +40,25 @@ const runningRun: Run = {
   status: "running",
   repo: "acme/product",
   dry_run: false,
+  documentation_source: {
+    kind: "github",
+    repo: "acme/product",
+    root: "docs",
+    url: "https://github.com/acme/product/tree/main/docs",
+    confidence: 0.97,
+    discovered_by: "readme_docs_link",
+    page_count: 24,
+  },
   issues_scraped: 0,
   pull_requests_scraped: 0,
   clusters_found: 0,
   docs_sources: [],
   docs_candidates_inspected: 0,
+  documentation_issues_scraped: 0,
+  documentation_pull_requests_scraped: 0,
   top_gaps: [],
   decisions: [],
+  warnings: [],
   errors: [],
 };
 
@@ -54,6 +68,8 @@ const progressiveGap: GapCluster = {
   recurring_question: "How do retries work?",
   issue_numbers: [12],
   pr_numbers: [],
+  issue_refs: ["acme/product#12"],
+  pr_refs: [],
   finding_type: "open_gap",
   severity: "medium",
   confidence: 0.9,
@@ -71,6 +87,7 @@ describe("HomePage live analysis", () => {
     mocks.createRun.mockReset();
     mocks.getRuntimeConfig.mockReset();
     mocks.getRun.mockReset();
+    mocks.resolveSources.mockReset();
     mocks.setGitHubApiKey.mockReset();
     mocks.setMergeGatewayApiKey.mockReset();
     mocks.getRuntimeConfig.mockResolvedValue({
@@ -83,8 +100,8 @@ describe("HomePage live analysis", () => {
       github_configured: true,
       github_account: "octocat",
       github_verified_repo: "acme/product",
-      github_document_fetch_limit: 60,
-      github_documents_per_finding: 5,
+      github_document_fetch_limit: 100,
+      github_documents_per_finding: 8,
     });
     mocks.setMergeGatewayApiKey.mockResolvedValue({
       write_enabled: false,
@@ -96,8 +113,8 @@ describe("HomePage live analysis", () => {
       github_configured: true,
       github_account: "octocat",
       github_verified_repo: "acme/product",
-      github_document_fetch_limit: 60,
-      github_documents_per_finding: 5,
+      github_document_fetch_limit: 100,
+      github_documents_per_finding: 8,
     });
     mocks.setGitHubApiKey.mockResolvedValue({
       write_enabled: false,
@@ -109,13 +126,20 @@ describe("HomePage live analysis", () => {
       github_configured: true,
       github_account: "octocat",
       github_verified_repo: "acme/product",
-      github_document_fetch_limit: 60,
-      github_documents_per_finding: 5,
+      github_document_fetch_limit: 100,
+      github_documents_per_finding: 8,
     });
     mocks.createRun.mockResolvedValue({
       run_id: runningRun.run_id,
       status: "running",
       repo: runningRun.repo,
+      documentation_source: runningRun.documentation_source,
+    });
+    mocks.resolveSources.mockResolvedValue({
+      product_repo: "acme/product",
+      documentation_sources: [runningRun.documentation_source],
+      selected_source: runningRun.documentation_source,
+      documentation_activity_repos: [],
     });
     mocks.getRun.mockResolvedValue(runningRun);
   });
@@ -182,8 +206,8 @@ describe("HomePage live analysis", () => {
       github_configured: false,
       github_account: null,
       github_verified_repo: null,
-      github_document_fetch_limit: 60,
-      github_documents_per_finding: 5,
+      github_document_fetch_limit: 100,
+      github_documents_per_finding: 8,
     });
     const { container } = render(
       <MemoryRouter>
@@ -209,7 +233,9 @@ describe("HomePage live analysis", () => {
     );
     await waitFor(() => expect(keyInput).toHaveValue(""));
     expect(screen.getByText(/verified read access/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /run agent/i })).toBeEnabled();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /run agent/i })).toBeEnabled(),
+    );
   });
 
   it("renders a gap as soon as it arrives on the event stream", async () => {
@@ -226,6 +252,14 @@ describe("HomePage live analysis", () => {
     await waitFor(() => expect(runButton).toBeEnabled());
     fireEvent.click(runButton);
 
+    await waitFor(() =>
+      expect(mocks.createRun).toHaveBeenCalledWith(
+        "acme/product",
+        runningRun.documentation_source,
+        true,
+      ),
+    );
+
     await waitFor(() => expect(mocks.eventHandler).toBeDefined());
     act(() => {
       mocks.eventHandler?.({
@@ -237,5 +271,44 @@ describe("HomePage live analysis", () => {
 
     expect(await screen.findByText("Retry behavior")).toBeInTheDocument();
     expect(screen.getByText("1 found")).toBeInTheDocument();
+  });
+
+  it("shows a separate official docs repo and includes its activity", async () => {
+    const externalSource = {
+      kind: "github" as const,
+      repo: "acme/docs",
+      root: "content/en/docs",
+      url: "https://docs.acme.dev",
+      confidence: 0.99,
+      discovered_by: "edit_on_github",
+      page_count: 42,
+    };
+    mocks.resolveSources.mockResolvedValueOnce({
+      product_repo: "acme/product",
+      documentation_sources: [externalSource],
+      selected_source: externalSource,
+      documentation_activity_repos: ["acme/docs"],
+    });
+    const { container } = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/paste your repo/i), {
+      target: { value: "acme/product" },
+    });
+
+    expect(
+      await screen.findAllByText(/acme\/docs \/ content\/en\/docs · 42 pages/i),
+    ).not.toHaveLength(0);
+    fireEvent.click(
+      container.querySelector(".documentation-connect > summary")!,
+    );
+    expect(
+      screen.getByText(/also analyze issues and merged prs from acme\/docs/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("checkbox")).toBeChecked();
+    expect(screen.getByRole("button", { name: /run agent/i })).toBeEnabled();
   });
 });

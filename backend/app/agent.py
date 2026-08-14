@@ -25,6 +25,14 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
                     "run_id": state.run_id,
                     "repo": request.repo,
                     "docs_url": request.docs_url,
+                    "documentation_source": (
+                        request.documentation_source.model_dump(mode="json")
+                        if request.documentation_source
+                        else None
+                    ),
+                    "include_documentation_activity": (
+                        request.include_documentation_activity
+                    ),
                     "limit": request.limit,
                     "dry_run": request.dry_run,
                     "issues": [],
@@ -32,7 +40,10 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
                     "clusters": [],
                     "docs_sources": [],
                     "docs_candidates_inspected": 0,
+                    "documentation_issues_scraped": 0,
+                    "documentation_pull_requests_scraped": 0,
                     "errors": [],
+                    "warnings": [],
                     "decisions": [],
                     "researched": False,
                     "analyzed": False,
@@ -75,7 +86,14 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
         DocSource.model_validate(source) for source in result.get("docs_sources", [])
     ]
     state.docs_candidates_inspected = result.get("docs_candidates_inspected", 0)
+    state.documentation_issues_scraped = result.get(
+        "documentation_issues_scraped", 0
+    )
+    state.documentation_pull_requests_scraped = result.get(
+        "documentation_pull_requests_scraped", 0
+    )
     state.decisions = result.get("decisions", [])
+    state.warnings = result.get("warnings", [])
     state.errors = result.get("errors", [])
     state.status = "completed_with_errors" if state.errors else "completed"
 
@@ -89,6 +107,11 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
             "clusters_found": len(state.clusters),
             "docs_sources_found": len(state.docs_sources),
             "docs_candidates_inspected": state.docs_candidates_inspected,
+            "documentation_issues_scraped": state.documentation_issues_scraped,
+            "documentation_pull_requests_scraped": (
+                state.documentation_pull_requests_scraped
+            ),
+            "warnings": state.warnings,
             "errors": state.errors,
         },
     )

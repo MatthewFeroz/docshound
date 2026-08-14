@@ -18,6 +18,8 @@ from app.api_models import (
     GitHubCredentialRequest,
     LLMCredentialRequest,
     PreviewDocumentationPullRequestRequest,
+    ResolveSourcesRequest,
+    ResolveSourcesResponse,
     RuntimeConfigResponse,
 )
 from app.approved_documents import (
@@ -37,6 +39,10 @@ from app.documentation_prs import (
     write_enabled,
 )
 from app.run_store import load_run, load_runs, save_run
+from app.source_resolver import (
+    enrich_documentation_source,
+    resolve_documentation_sources,
+)
 from app.runtime_credentials import (
     get_github_api_token,
     get_github_connection,
@@ -120,13 +126,19 @@ def _run_response(state: AgentState) -> RunResponse:
         status=state.status,
         repo=state.repo,
         dry_run=state.dry_run,
+        documentation_source=state.documentation_source,
         issues_scraped=len(state.issues),
         pull_requests_scraped=len(state.pull_requests),
         clusters_found=len(state.clusters),
         docs_sources=state.docs_sources,
         docs_candidates_inspected=state.docs_candidates_inspected,
+        documentation_issues_scraped=state.documentation_issues_scraped,
+        documentation_pull_requests_scraped=(
+            state.documentation_pull_requests_scraped
+        ),
         top_gaps=state.clusters,
         decisions=state.decisions,
+        warnings=state.warnings,
         errors=state.errors,
     )
 
@@ -138,6 +150,8 @@ def _finding_response(state: AgentState, index: int) -> FindingResponse:
     cluster = state.clusters[index]
     issue_numbers = set(cluster.issue_numbers)
     pull_request_numbers = set(cluster.pr_numbers)
+    issue_refs = set(cluster.issue_refs)
+    pull_request_refs = set(cluster.pr_refs)
     approved_document = get_approved_document_for_gap(state.run_id, index)
     documentation_change = None
     if approved_document:
@@ -150,12 +164,23 @@ def _finding_response(state: AgentState, index: int) -> FindingResponse:
         index=index,
         cluster=cluster,
         source_issues=[
-            issue for issue in state.issues if issue.number in issue_numbers
+            issue
+            for issue in state.issues
+            if (
+                f"{issue.source_repo or state.repo}#{issue.number}" in issue_refs
+                if issue_refs
+                else issue.number in issue_numbers
+            )
         ],
         source_pull_requests=[
             pull_request
             for pull_request in state.pull_requests
-            if pull_request.number in pull_request_numbers
+            if (
+                f"{pull_request.source_repo or state.repo}#{pull_request.number}"
+                in pull_request_refs
+                if pull_request_refs
+                else pull_request.number in pull_request_numbers
+            )
         ],
         approved_document=approved_document,
         documentation_change=documentation_change,
@@ -173,12 +198,22 @@ def _document_response(document: ApprovedDocument) -> DocumentResponse:
         documentation_change=get_documentation_change(document.slug),
         suggested_file_path=coverage.recommended_path if coverage else None,
         suggested_action=coverage.recommended_action if coverage else None,
+        suggested_target_repo=(
+            state.documentation_source.repo
+            if state and state.documentation_source
+            else document.repo
+        ),
         write_enabled=write_enabled(),
     )
 
 
 def _start_run(request: RunRequest) -> AgentState:
-    state = AgentState(repo=request.repo, dry_run=request.dry_run)
+    state = AgentState(
+        repo=request.repo,
+        dry_run=request.dry_run,
+        documentation_source=request.documentation_source,
+        include_documentation_activity=request.include_documentation_activity,
+    )
     RUNS[state.run_id] = state
     save_run(state)
     asyncio.create_task(run_agent(request, state=state))
@@ -298,14 +333,61 @@ async def create_run(request: CreateRunRequest) -> CreateRunResponse:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    documentation_source = request.documentation_source
+    try:
+        if documentation_source is None:
+            resolved = await resolve_documentation_sources(repo)
+            documentation_source = resolved.selected_source
+        else:
+            documentation_source = await enrich_documentation_source(
+                documentation_source,
+                product_repo=repo,
+            )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not verify the documentation source: {exc}",
+        ) from exc
+
     run_request = RunRequest(
         repo=repo,
         docs_url=request.docs_url,
+        documentation_source=documentation_source,
+        include_documentation_activity=request.include_documentation_activity,
         limit=request.limit,
         dry_run=request.dry_run,
     )
     state = _start_run(run_request)
-    return CreateRunResponse(run_id=state.run_id, status=state.status, repo=state.repo)
+    return CreateRunResponse(
+        run_id=state.run_id,
+        status=state.status,
+        repo=state.repo,
+        documentation_source=state.documentation_source,
+    )
+
+
+@app.post(
+    "/api/v1/sources/resolve",
+    response_model=ResolveSourcesResponse,
+)
+async def resolve_sources(request: ResolveSourcesRequest) -> ResolveSourcesResponse:
+    try:
+        repo = _normalize_repo(request.repo)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        resolution = await resolve_documentation_sources(repo)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not resolve official documentation for {repo}: {exc}",
+        ) from exc
+    return ResolveSourcesResponse(
+        product_repo=resolution.product_repo,
+        documentation_sources=resolution.documentation_sources,
+        selected_source=resolution.selected_source,
+        documentation_activity_repos=resolution.documentation_activity_repos,
+    )
 
 
 @app.post("/runs", include_in_schema=False)
@@ -424,7 +506,12 @@ async def approve_finding(
         summary=cluster.draft_summary or cluster.summary,
         markdown_source=markdown_source,
         source_issues=[
-            {"number": issue.number, "title": issue.title, "url": str(issue.url)}
+            {
+                "number": issue.number,
+                "title": issue.title,
+                "url": str(issue.url),
+                "repo": issue.source_repo or state.repo,
+            }
             for issue in finding.source_issues
         ]
         + [
@@ -433,6 +520,7 @@ async def approve_finding(
                 "title": pull_request.title,
                 "url": str(pull_request.url),
                 "kind": "pull_request",
+                "repo": pull_request.source_repo or state.repo,
             }
             for pull_request in finding.source_pull_requests
         ],

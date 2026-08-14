@@ -11,8 +11,26 @@ export interface DocSource {
   repository_path: string | null;
 }
 
+export interface DocumentationSource {
+  kind: "github" | "website";
+  repo: string | null;
+  root: string | null;
+  url: string | null;
+  confidence: number;
+  discovered_by: string;
+  page_count: number | null;
+}
+
+export interface SourceResolution {
+  product_repo: string;
+  documentation_sources: DocumentationSource[];
+  selected_source: DocumentationSource;
+  documentation_activity_repos: string[];
+}
+
 export interface DocumentationCoverage {
-  status: "missing" | "partial" | "documented" | "unable_to_verify";
+  status:
+    "missing" | "partial" | "documented" | "in_progress" | "unable_to_verify";
   rationale: string;
   recommended_action: "create_page" | "update_page" | "no_change";
   recommended_path: string | null;
@@ -29,6 +47,7 @@ export interface Issue {
   comments_count: number;
   created_at: string;
   updated_at: string;
+  source_repo: string | null;
 }
 
 export interface PullRequest {
@@ -37,10 +56,11 @@ export interface PullRequest {
   body: string | null;
   url: string;
   state: string;
-  merged_at: string;
+  merged_at: string | null;
   labels: string[];
   created_at: string;
   updated_at: string;
+  source_repo: string | null;
 }
 
 export interface GapCluster {
@@ -49,6 +69,8 @@ export interface GapCluster {
   recurring_question: string;
   issue_numbers: number[];
   pr_numbers: number[];
+  issue_refs: string[];
+  pr_refs: string[];
   finding_type: "open_gap" | "shipped_change";
   severity: Severity;
   confidence: number;
@@ -65,6 +87,7 @@ export interface ApprovedSource {
   title: string;
   url: string;
   kind?: "issue" | "pull_request";
+  repo?: string;
 }
 
 export interface ApprovedDocument {
@@ -116,13 +139,17 @@ export interface Run {
   status: "running" | "completed" | "completed_with_errors" | "failed";
   repo: string;
   dry_run: boolean;
+  documentation_source: DocumentationSource | null;
   issues_scraped: number;
   pull_requests_scraped: number;
   clusters_found: number;
   docs_sources: DocSource[];
   docs_candidates_inspected: number;
+  documentation_issues_scraped: number;
+  documentation_pull_requests_scraped: number;
   top_gaps: GapCluster[];
   decisions: Array<Record<string, unknown>>;
+  warnings: string[];
   errors: string[];
 }
 
@@ -130,6 +157,7 @@ export interface CreateRunResponse {
   run_id: string;
   status: string;
   repo: string;
+  documentation_source: DocumentationSource | null;
 }
 
 export interface RuntimeConfig {
@@ -152,6 +180,7 @@ export interface DocumentPayload {
   documentation_change: DocumentationChange | null;
   suggested_file_path: string | null;
   suggested_action: "create_page" | "update_page" | "no_change" | null;
+  suggested_target_repo: string | null;
   write_enabled: boolean;
 }
 
@@ -169,4 +198,7 @@ export interface RunEvent {
   title?: string;
   index?: number;
   cluster?: GapCluster;
+  repo?: string;
+  issues_count?: number;
+  pull_requests_count?: number;
 }

@@ -126,6 +126,7 @@ async def research_repo(repo: str, limit: int) -> list[Issue]:
                         updated_at=datetime.fromisoformat(
                             item["updated_at"].replace("Z", "+00:00")
                         ),
+                        source_repo=repo,
                     )
                 )
                 if len(issues) >= limit:
@@ -133,8 +134,12 @@ async def research_repo(repo: str, limit: int) -> list[Issue]:
     return issues
 
 
-async def research_pull_requests(repo: str, limit: int) -> list[PullRequest]:
-    """Fetch recently merged pull requests independently from the issue limit."""
+async def research_pull_requests(
+    repo: str,
+    limit: int,
+    include_open: bool = False,
+) -> list[PullRequest]:
+    """Fetch merged PRs, plus open PRs for a separate documentation repo."""
     headers = _github_headers(configured_github_token())
 
     url = f"https://api.github.com/repos/{repo}/pulls"
@@ -146,7 +151,7 @@ async def research_pull_requests(repo: str, limit: int) -> list[PullRequest]:
                 url,
                 headers=headers,
                 params={
-                    "state": "closed",
+                    "state": "all" if include_open else "closed",
                     "per_page": 100,
                     "page": page,
                     "sort": "updated",
@@ -163,7 +168,8 @@ async def research_pull_requests(repo: str, limit: int) -> list[PullRequest]:
             if not items:
                 break
             for item in items:
-                if not item.get("merged_at"):
+                merged_at = item.get("merged_at")
+                if not merged_at and not (include_open and item.get("state") == "open"):
                     continue
                 pull_requests.append(
                     PullRequest(
@@ -171,9 +177,11 @@ async def research_pull_requests(repo: str, limit: int) -> list[PullRequest]:
                         title=item["title"],
                         body=item.get("body"),
                         url=item["html_url"],
-                        state="merged",
-                        merged_at=datetime.fromisoformat(
-                            item["merged_at"].replace("Z", "+00:00")
+                        state="merged" if merged_at else "open",
+                        merged_at=(
+                            datetime.fromisoformat(merged_at.replace("Z", "+00:00"))
+                            if merged_at
+                            else None
                         ),
                         labels=[label["name"] for label in item.get("labels", [])],
                         created_at=datetime.fromisoformat(
@@ -182,6 +190,7 @@ async def research_pull_requests(repo: str, limit: int) -> list[PullRequest]:
                         updated_at=datetime.fromisoformat(
                             item["updated_at"].replace("Z", "+00:00")
                         ),
+                        source_repo=repo,
                     )
                 )
                 if len(pull_requests) >= target:

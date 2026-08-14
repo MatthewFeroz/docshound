@@ -2,9 +2,11 @@ import type {
   CreateRunResponse,
   DocumentPayload,
   Finding,
+  DocumentationSource,
   Run,
   RunEvent,
   RuntimeConfig,
+  SourceResolution,
 } from "./types";
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim() ?? "";
@@ -54,10 +56,25 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ repo, api_key: apiKey || null }),
     }),
-  createRun: (repo: string) =>
+  resolveSources: (repo: string) =>
+    request<SourceResolution>("/api/v1/sources/resolve", {
+      method: "POST",
+      body: JSON.stringify({ repo }),
+    }),
+  createRun: (
+    repo: string,
+    documentationSource: DocumentationSource,
+    includeDocumentationActivity = true,
+  ) =>
     request<CreateRunResponse>("/api/v1/runs", {
       method: "POST",
-      body: JSON.stringify({ repo, limit: 50, dry_run: false }),
+      body: JSON.stringify({
+        repo,
+        documentation_source: documentationSource,
+        include_documentation_activity: includeDocumentationActivity,
+        limit: 50,
+        dry_run: false,
+      }),
     }),
   getRun: (runId: string) => request<Run>(`/api/v1/runs/${runId}`),
   listFindings: () => request<Finding[]>("/api/v1/findings"),
