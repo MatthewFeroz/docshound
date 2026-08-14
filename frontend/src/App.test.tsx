@@ -17,4 +17,19 @@ describe("DocsHound frontend", () => {
       screen.getByRole("button", { name: /run agent/i }),
     ).toBeInTheDocument();
   });
+
+  it("redirects the former showcase route to the consolidated homepage", async () => {
+    render(
+      <MemoryRouter initialEntries={["/showcase"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        name: /see the evidence, the decisions, and the draft/i,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /github/i })).toBeInTheDocument();
+  });
 });

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from app.state import GapCluster, Issue, PullRequest
 
@@ -87,3 +87,9 @@ class RuntimeConfigResponse(BaseModel):
     llm_gateway: str | None = None
     llm_primary_model: str | None = None
     llm_fallback_model: str | None = None
+    llm_configured: bool
+    credential_input_enabled: bool
+
+
+class LLMCredentialRequest(BaseModel):
+    api_key: SecretStr = Field(min_length=1, max_length=4096)

@@ -136,6 +136,8 @@ export interface RuntimeConfig {
   llm_gateway: string | null;
   llm_primary_model: string | null;
   llm_fallback_model: string | null;
+  llm_configured: boolean;
+  credential_input_enabled: boolean;
 }
 
 export interface DocumentPayload {

@@ -79,6 +79,7 @@ Add credentials to `backend/.env` (or a root `.env` for compatibility with
 existing local installations):
 
 ```text
+APP_ENV=development   # set to production to disable browser key entry
 GITHUB_TOKEN=          # optional: higher read limits
 GITHUB_WRITE_TOKEN=    # optional: create documentation branches and PRs
 MERGE_GATEWAY_API_KEY= # recommended: model-based analysis through Gateway
@@ -105,6 +106,12 @@ VITE_API_BASE_URL=https://api.example.com
 Values prefixed with `VITE_` are public and embedded in the browser bundle.
 Never place Merge Gateway, model-provider, or GitHub credentials in the
 frontend environment.
+
+In local development, the homepage connection menu can send a Merge Gateway
+key to the backend. That override is held only in backend process memory and is
+cleared on restart. Browser credential entry is disabled when `APP_ENV` is
+`production`; production deployments should inject `MERGE_GATEWAY_API_KEY`
+through the server's secret manager.
 
 ### OpenTelemetry and OpenInference tracing
 

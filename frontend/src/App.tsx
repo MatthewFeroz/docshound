@@ -10,6 +10,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
+      <Route path="/showcase" element={<Navigate to="/#overview" replace />} />
       <Route path="/findings" element={<FindingsPage />} />
       <Route path="/runs/:runId/findings/:index" element={<FindingPage />} />
       <Route path="/documents/:slug" element={<DocumentPage />} />

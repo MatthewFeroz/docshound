@@ -15,6 +15,7 @@ from app.api_models import (
     CreateRunResponse,
     DocumentResponse,
     FindingResponse,
+    LLMCredentialRequest,
     PreviewDocumentationPullRequestRequest,
     RuntimeConfigResponse,
 )
@@ -35,6 +36,7 @@ from app.documentation_prs import (
     write_enabled,
 )
 from app.run_store import load_run, load_runs, save_run
+from app.runtime_credentials import set_merge_gateway_api_key
 from app.state import RUNS, AgentState, RunRequest, RunResponse
 
 app = FastAPI(
@@ -178,13 +180,46 @@ async def health() -> dict[str, str]:
 
 @app.get("/api/v1/config", response_model=RuntimeConfigResponse)
 async def runtime_config() -> RuntimeConfigResponse:
+    return _runtime_config_response()
+
+
+def _runtime_config_response() -> RuntimeConfigResponse:
     route = get_llm_route()
+    credential_input_enabled = get_settings().app_env.lower() not in {
+        "production",
+        "prod",
+    }
     return RuntimeConfigResponse(
         write_enabled=write_enabled(),
         llm_gateway=route.gateway if route else None,
         llm_primary_model=route.models[0] if route and route.models else None,
         llm_fallback_model=route.models[1] if route and len(route.models) > 1 else None,
+        llm_configured=route is not None,
+        credential_input_enabled=credential_input_enabled,
     )
+
+
+@app.post(
+    "/api/v1/config/llm-credential",
+    response_model=RuntimeConfigResponse,
+)
+async def set_llm_credential(
+    request: LLMCredentialRequest,
+) -> RuntimeConfigResponse:
+    if get_settings().app_env.lower() in {"production", "prod"}:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Browser credential entry is disabled in production. "
+                "Configure MERGE_GATEWAY_API_KEY on the server instead."
+            ),
+        )
+
+    try:
+        set_merge_gateway_api_key(request.api_key.get_secret_value())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _runtime_config_response()
 
 
 @app.post("/api/v1/runs", response_model=CreateRunResponse, status_code=202)

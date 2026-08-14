@@ -44,6 +44,15 @@ class DocsHoundGraphState(TypedDict, total=False):
 
 async def llm_decide(state: DocsHoundGraphState) -> DocsHoundGraphState:
     fallback_action = _safe_next_action(state)
+    if fallback_action == "store":
+        state["next_action"] = "store"
+        state["decision_reason"] = (
+            "The workflow reached a terminal state, so the run can be "
+            "finalized without another model request."
+        )
+        _record_decision(state)
+        return state
+
     if not llm_is_configured():
         state["next_action"] = fallback_action
         state["decision_reason"] = "No LLM credential is set; used fallback router."

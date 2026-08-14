@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from app import approved_documents, documentation_prs, run_store
 from app.main import app
+from app.runtime_credentials import clear_runtime_credentials
 from app.state import RUNS, AgentState, DocumentationCoverage, GapCluster, Issue
 
 
@@ -25,6 +26,7 @@ class ApiTests(unittest.TestCase):
         approved_documents.DB_PATH = self.db_path
         documentation_prs.DB_PATH = self.db_path
         RUNS.clear()
+        clear_runtime_credentials()
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
@@ -35,6 +37,7 @@ class ApiTests(unittest.TestCase):
             documentation_prs.DB_PATH,
         ) = self.original_paths
         RUNS.clear()
+        clear_runtime_credentials()
         self.temp_dir.cleanup()
 
     def _seed_run(self) -> AgentState:
@@ -114,9 +117,42 @@ class ApiTests(unittest.TestCase):
                 "llm_gateway": "merge",
                 "llm_primary_model": "google/gemini-3.7-flash",
                 "llm_fallback_model": "openai/gpt-5.6-luna",
+                "llm_configured": True,
+                "credential_input_enabled": True,
             },
         )
         self.assertNotIn("key", response.text.lower())
+
+    def test_local_runtime_credential_is_accepted_without_echoing_it(self) -> None:
+        with (
+            patch(
+                "app.main.get_settings",
+                return_value=SimpleNamespace(app_env="development"),
+            ),
+            patch("app.main.write_enabled", return_value=False),
+        ):
+            response = self.client.post(
+                "/api/v1/config/llm-credential",
+                json={"api_key": "temporary-gateway-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["llm_configured"])
+        self.assertEqual(response.json()["llm_gateway"], "merge")
+        self.assertNotIn("temporary-gateway-secret", response.text)
+
+    def test_browser_credential_entry_is_disabled_in_production(self) -> None:
+        with patch(
+            "app.main.get_settings",
+            return_value=SimpleNamespace(app_env="production"),
+        ):
+            response = self.client.post(
+                "/api/v1/config/llm-credential",
+                json={"api_key": "temporary-gateway-secret"},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("disabled in production", response.json()["detail"])
 
     def test_legacy_run_routes_remain_compatible(self) -> None:
         with patch("app.main.run_agent", new=AsyncMock()):

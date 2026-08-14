@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   createRun: vi.fn(),
   getRuntimeConfig: vi.fn(),
   getRun: vi.fn(),
+  setMergeGatewayApiKey: vi.fn(),
   eventHandler: undefined as ((event: unknown) => void) | undefined,
 }));
 
@@ -22,6 +23,7 @@ vi.mock("../api", () => ({
     createRun: mocks.createRun,
     getRuntimeConfig: mocks.getRuntimeConfig,
     getRun: mocks.getRun,
+    setMergeGatewayApiKey: mocks.setMergeGatewayApiKey,
   },
   subscribeToRun: (_runId: string, onEvent: (event: unknown) => void) => {
     mocks.eventHandler = onEvent;
@@ -66,11 +68,22 @@ describe("HomePage live analysis", () => {
     mocks.createRun.mockReset();
     mocks.getRuntimeConfig.mockReset();
     mocks.getRun.mockReset();
+    mocks.setMergeGatewayApiKey.mockReset();
     mocks.getRuntimeConfig.mockResolvedValue({
       write_enabled: false,
       llm_gateway: "merge",
       llm_primary_model: "google/gemini-3.7-flash",
       llm_fallback_model: "openai/gpt-5.6-luna",
+      llm_configured: true,
+      credential_input_enabled: true,
+    });
+    mocks.setMergeGatewayApiKey.mockResolvedValue({
+      write_enabled: false,
+      llm_gateway: "merge",
+      llm_primary_model: "google/gemini-3.7-flash",
+      llm_fallback_model: "openai/gpt-5.6-luna",
+      llm_configured: true,
+      credential_input_enabled: true,
     });
     mocks.createRun.mockResolvedValue({
       run_id: runningRun.run_id,
@@ -78,6 +91,57 @@ describe("HomePage live analysis", () => {
       repo: runningRun.repo,
     });
     mocks.getRun.mockResolvedValue(runningRun);
+  });
+
+  it("renders the decorative GitHub workflow panes", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(container.querySelector(".hero-floater-left")).toHaveTextContent(
+      "12 issues clustered",
+    );
+    expect(container.querySelector(".hero-floater-right")).toHaveTextContent(
+      "Draft → review → approve",
+    );
+    expect(
+      container.querySelector('img[src="/logos/opencode-mark.svg"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('img[src="/logos/deepagents-mark.svg"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('img[src="/logos/pi-mark.svg"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('img[src="/logos/t3-code-mark.svg"]'),
+    ).toBeInTheDocument();
+    expect(container.querySelectorAll(".source-word")).toHaveLength(4);
+  });
+
+  it("sends a Gateway key to the backend without retaining it in the field", async () => {
+    const { container } = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(container.querySelector(".hero-model-picker summary")!);
+    const keyInput = screen.getByLabelText(/merge gateway api key/i);
+    fireEvent.change(keyInput, { target: { value: "merge-secret-key" } });
+    fireEvent.click(screen.getByRole("button", { name: /save connection/i }));
+
+    await waitFor(() =>
+      expect(mocks.setMergeGatewayApiKey).toHaveBeenCalledWith(
+        "merge-secret-key",
+      ),
+    );
+    await waitFor(() => expect(keyInput).toHaveValue(""));
+    expect(
+      screen.getByText(/connected for this local server session/i),
+    ).toBeInTheDocument();
   });
 
   it("renders a gap as soon as it arrives on the event stream", async () => {
