@@ -15,6 +15,7 @@ from app.api_models import (
     CreateRunResponse,
     DocumentResponse,
     FindingResponse,
+    GitHubCredentialRequest,
     LLMCredentialRequest,
     PreviewDocumentationPullRequestRequest,
     RuntimeConfigResponse,
@@ -36,8 +37,19 @@ from app.documentation_prs import (
     write_enabled,
 )
 from app.run_store import load_run, load_runs, save_run
-from app.runtime_credentials import set_merge_gateway_api_key
+from app.runtime_credentials import (
+    get_github_api_token,
+    get_github_connection,
+    record_github_verification,
+    set_github_api_token,
+    set_merge_gateway_api_key,
+)
 from app.state import RUNS, AgentState, RunRequest, RunResponse
+from app.tools.docs import (
+    AUTHENTICATED_DOCUMENT_FETCH_LIMIT,
+    AUTHENTICATED_DOCUMENTS_PER_FINDING,
+)
+from app.tools.github import GitHubToolError, validate_github_access
 
 app = FastAPI(
     title="DocsHound API",
@@ -112,6 +124,7 @@ def _run_response(state: AgentState) -> RunResponse:
         pull_requests_scraped=len(state.pull_requests),
         clusters_found=len(state.clusters),
         docs_sources=state.docs_sources,
+        docs_candidates_inspected=state.docs_candidates_inspected,
         top_gaps=state.clusters,
         decisions=state.decisions,
         errors=state.errors,
@@ -185,10 +198,15 @@ async def runtime_config() -> RuntimeConfigResponse:
 
 def _runtime_config_response() -> RuntimeConfigResponse:
     route = get_llm_route()
-    credential_input_enabled = get_settings().app_env.lower() not in {
+    settings = get_settings()
+    credential_input_enabled = settings.app_env.lower() not in {
         "production",
         "prod",
     }
+    github_account, github_verified_repo = get_github_connection()
+    github_configured = bool(
+        get_github_api_token() or getattr(settings, "github_token", None)
+    )
     return RuntimeConfigResponse(
         write_enabled=write_enabled(),
         llm_gateway=route.gateway if route else None,
@@ -196,6 +214,11 @@ def _runtime_config_response() -> RuntimeConfigResponse:
         llm_fallback_model=route.models[1] if route and len(route.models) > 1 else None,
         llm_configured=route is not None,
         credential_input_enabled=credential_input_enabled,
+        github_configured=github_configured,
+        github_account=github_account,
+        github_verified_repo=github_verified_repo,
+        github_document_fetch_limit=AUTHENTICATED_DOCUMENT_FETCH_LIMIT,
+        github_documents_per_finding=AUTHENTICATED_DOCUMENTS_PER_FINDING,
     )
 
 
@@ -219,6 +242,52 @@ async def set_llm_credential(
         set_merge_gateway_api_key(request.api_key.get_secret_value())
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _runtime_config_response()
+
+
+@app.post(
+    "/api/v1/config/github-credential",
+    response_model=RuntimeConfigResponse,
+)
+async def set_github_credential(
+    request: GitHubCredentialRequest,
+) -> RuntimeConfigResponse:
+    try:
+        repo = _normalize_repo(request.repo)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    supplied_token = request.api_key.get_secret_value() if request.api_key else None
+    settings = get_settings()
+    if supplied_token and settings.app_env.lower() in {"production", "prod"}:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Browser credential entry is disabled in production. "
+                "Configure GITHUB_TOKEN on the server instead."
+            ),
+        )
+
+    token = supplied_token or get_github_api_token() or settings.github_token
+    if not token:
+        raise HTTPException(
+            status_code=422,
+            detail="Enter a GitHub access token to enable a deep documentation scan.",
+        )
+
+    try:
+        account, verified_repo = await validate_github_access(repo, token)
+    except GitHubToolError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if supplied_token:
+        set_github_api_token(
+            supplied_token,
+            account=account,
+            repo=verified_repo,
+        )
+    else:
+        record_github_verification(account=account, repo=verified_repo)
     return _runtime_config_response()
 
 

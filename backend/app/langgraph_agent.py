@@ -31,6 +31,7 @@ class DocsHoundGraphState(TypedDict, total=False):
     pull_requests: list[dict]
     clusters: list[dict]
     docs_sources: list[dict]
+    docs_candidates_inspected: int
     errors: list[str]
     next_action: str
     decision_reason: str
@@ -245,7 +246,7 @@ async def search_docs(state: DocsHoundGraphState) -> DocsHoundGraphState:
             GapCluster.model_validate(cluster)
             for cluster in state.get("clusters", [])
         ]
-        clusters, sources = await run_traced(
+        clusters, sources, inspected_count = await run_traced(
             "search_official_docs",
             state["run_id"],
             state["repo"],
@@ -259,11 +260,13 @@ async def search_docs(state: DocsHoundGraphState) -> DocsHoundGraphState:
             cluster.model_dump(mode="json") for cluster in clusters
         ]
         state["docs_sources"] = source_dicts
+        state["docs_candidates_inspected"] = inspected_count
         events.publish(
             state["run_id"],
             {
                 "type": "docs_sources_found",
                 "count": len(source_dicts),
+                "inspected_count": inspected_count,
                 "sources": source_dicts,
             },
         )

@@ -120,6 +120,7 @@ export interface Run {
   pull_requests_scraped: number;
   clusters_found: number;
   docs_sources: DocSource[];
+  docs_candidates_inspected: number;
   top_gaps: GapCluster[];
   decisions: Array<Record<string, unknown>>;
   errors: string[];
@@ -138,6 +139,11 @@ export interface RuntimeConfig {
   llm_fallback_model: string | null;
   llm_configured: boolean;
   credential_input_enabled: boolean;
+  github_configured: boolean;
+  github_account: string | null;
+  github_verified_repo: string | null;
+  github_document_fetch_limit: number;
+  github_documents_per_finding: number;
 }
 
 export interface DocumentPayload {
@@ -157,6 +163,7 @@ export interface RunEvent {
   action?: string;
   reason?: string;
   count?: number;
+  inspected_count?: number;
   duration_ms?: number;
   error?: string;
   title?: string;

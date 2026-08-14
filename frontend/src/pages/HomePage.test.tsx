@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   createRun: vi.fn(),
   getRuntimeConfig: vi.fn(),
   getRun: vi.fn(),
+  setGitHubApiKey: vi.fn(),
   setMergeGatewayApiKey: vi.fn(),
   eventHandler: undefined as ((event: unknown) => void) | undefined,
 }));
@@ -23,6 +24,7 @@ vi.mock("../api", () => ({
     createRun: mocks.createRun,
     getRuntimeConfig: mocks.getRuntimeConfig,
     getRun: mocks.getRun,
+    setGitHubApiKey: mocks.setGitHubApiKey,
     setMergeGatewayApiKey: mocks.setMergeGatewayApiKey,
   },
   subscribeToRun: (_runId: string, onEvent: (event: unknown) => void) => {
@@ -40,6 +42,7 @@ const runningRun: Run = {
   pull_requests_scraped: 0,
   clusters_found: 0,
   docs_sources: [],
+  docs_candidates_inspected: 0,
   top_gaps: [],
   decisions: [],
   errors: [],
@@ -68,6 +71,7 @@ describe("HomePage live analysis", () => {
     mocks.createRun.mockReset();
     mocks.getRuntimeConfig.mockReset();
     mocks.getRun.mockReset();
+    mocks.setGitHubApiKey.mockReset();
     mocks.setMergeGatewayApiKey.mockReset();
     mocks.getRuntimeConfig.mockResolvedValue({
       write_enabled: false,
@@ -76,6 +80,11 @@ describe("HomePage live analysis", () => {
       llm_fallback_model: "openai/gpt-5.6-luna",
       llm_configured: true,
       credential_input_enabled: true,
+      github_configured: true,
+      github_account: "octocat",
+      github_verified_repo: "acme/product",
+      github_document_fetch_limit: 60,
+      github_documents_per_finding: 5,
     });
     mocks.setMergeGatewayApiKey.mockResolvedValue({
       write_enabled: false,
@@ -84,6 +93,24 @@ describe("HomePage live analysis", () => {
       llm_fallback_model: "openai/gpt-5.6-luna",
       llm_configured: true,
       credential_input_enabled: true,
+      github_configured: true,
+      github_account: "octocat",
+      github_verified_repo: "acme/product",
+      github_document_fetch_limit: 60,
+      github_documents_per_finding: 5,
+    });
+    mocks.setGitHubApiKey.mockResolvedValue({
+      write_enabled: false,
+      llm_gateway: "merge",
+      llm_primary_model: "google/gemini-3.7-flash",
+      llm_fallback_model: "openai/gpt-5.6-luna",
+      llm_configured: true,
+      credential_input_enabled: true,
+      github_configured: true,
+      github_account: "octocat",
+      github_verified_repo: "acme/product",
+      github_document_fetch_limit: 60,
+      github_documents_per_finding: 5,
     });
     mocks.createRun.mockResolvedValue({
       run_id: runningRun.run_id,
@@ -144,6 +171,47 @@ describe("HomePage live analysis", () => {
     ).toBeInTheDocument();
   });
 
+  it("verifies a GitHub token before enabling a deep repository run", async () => {
+    mocks.getRuntimeConfig.mockResolvedValueOnce({
+      write_enabled: false,
+      llm_gateway: "merge",
+      llm_primary_model: "google/gemini-3.7-flash",
+      llm_fallback_model: "openai/gpt-5.6-luna",
+      llm_configured: true,
+      credential_input_enabled: true,
+      github_configured: false,
+      github_account: null,
+      github_verified_repo: null,
+      github_document_fetch_limit: 60,
+      github_documents_per_finding: 5,
+    });
+    const { container } = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/paste your repo/i), {
+      target: { value: "https://github.com/acme/product" },
+    });
+    expect(screen.getByRole("button", { name: /run agent/i })).toBeDisabled();
+
+    fireEvent.click(container.querySelector(".readiness-connect > summary")!);
+    const keyInput = screen.getByLabelText(/fine-grained personal access/i);
+    fireEvent.change(keyInput, { target: { value: "github_pat_secret" } });
+    fireEvent.click(screen.getByRole("button", { name: /connect github/i }));
+
+    await waitFor(() =>
+      expect(mocks.setGitHubApiKey).toHaveBeenCalledWith(
+        "acme/product",
+        "github_pat_secret",
+      ),
+    );
+    await waitFor(() => expect(keyInput).toHaveValue(""));
+    expect(screen.getByText(/verified read access/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /run agent/i })).toBeEnabled();
+  });
+
   it("renders a gap as soon as it arrives on the event stream", async () => {
     render(
       <MemoryRouter>
@@ -154,7 +222,9 @@ describe("HomePage live analysis", () => {
     fireEvent.change(screen.getByPlaceholderText(/paste your repo/i), {
       target: { value: "acme/product" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /run agent/i }));
+    const runButton = screen.getByRole("button", { name: /run agent/i });
+    await waitFor(() => expect(runButton).toBeEnabled());
+    fireEvent.click(runButton);
 
     await waitFor(() => expect(mocks.eventHandler).toBeDefined());
     act(() => {

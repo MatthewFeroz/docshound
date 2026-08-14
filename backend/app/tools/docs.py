@@ -10,6 +10,7 @@ import httpx
 
 from app.config import get_settings
 from app.llm import complete_json, llm_is_configured, require_json_array
+from app.runtime_credentials import get_github_api_token
 from app.state import DocSource, DocumentationCoverage, GapCluster
 
 
@@ -46,6 +47,12 @@ GENERIC_README_PATH_TERMS = {
 }
 LOCALE_SEGMENT = re.compile(r"^[a-z]{2}(?:-[a-z]{2})?$", re.IGNORECASE)
 ENGLISH_LOCALES = {"en", "en-gb", "en-us"}
+PUBLIC_PATHS_PER_FINDING = 5
+PUBLIC_DOCUMENT_FETCH_LIMIT = 24
+PUBLIC_DOCUMENTS_PER_FINDING = 3
+AUTHENTICATED_PATHS_PER_FINDING = 10
+AUTHENTICATED_DOCUMENT_FETCH_LIMIT = 60
+AUTHENTICATED_DOCUMENTS_PER_FINDING = 5
 STOP_WORDS = {
     "a",
     "about",
@@ -86,13 +93,14 @@ async def search_official_docs(
     clusters: list[GapCluster],
     *,
     client: httpx.AsyncClient | None = None,
-) -> tuple[list[GapCluster], list[DocSource]]:
+) -> tuple[list[GapCluster], list[DocSource], int]:
     """Search first-party documentation and assess coverage before drafting.
 
     The GitHub tree is searched once, candidate paths are ranked per finding, and
     only the most relevant documents are downloaded. Coverage stays conservative
     when no model is configured: lexical similarity can identify an update target,
-    but cannot claim that a page fully documents the behavior.
+    but cannot claim that a page fully documents the behavior. The final return
+    value reports how many repository document bodies were inspected.
     """
     homepage_sources = await _extract_docs_url(docs_url, clusters) if docs_url else []
     try:
@@ -115,12 +123,17 @@ async def search_official_docs(
                 recommended_action="create_page",
                 relevant_sources=[],
             )
-        return clusters, [*homepage_sources, error_source]
+        return clusters, [*homepage_sources, error_source], 0
 
     sources_by_cluster: list[list[DocSource]] = []
     ranked_documents: list[list[RepositoryDocument]] = []
     for cluster in clusters:
-        ranked = _rank_documents(cluster, documents)[:3]
+        document_limit = (
+            AUTHENTICATED_DOCUMENTS_PER_FINDING
+            if _configured_github_token()
+            else PUBLIC_DOCUMENTS_PER_FINDING
+        )
+        ranked = _rank_documents(cluster, documents)[:document_limit]
         ranked_documents.append(ranked)
         sources_by_cluster.append(
             [_document_source(document, cluster) for document in ranked]
@@ -195,7 +208,7 @@ async def search_official_docs(
             source_type="repository_docs",
             confidence=0.7,
         )
-    return clusters, list(unique_sources.values())[:24]
+    return clusters, list(unique_sources.values())[:24], len(documents)
 
 
 async def _load_relevant_repository_documents(
@@ -203,7 +216,13 @@ async def _load_relevant_repository_documents(
     clusters: list[GapCluster],
     client: httpx.AsyncClient | None,
 ) -> list[RepositoryDocument]:
-    token = get_settings().github_token
+    token = _configured_github_token()
+    paths_per_finding = (
+        AUTHENTICATED_PATHS_PER_FINDING if token else PUBLIC_PATHS_PER_FINDING
+    )
+    document_fetch_limit = (
+        AUTHENTICATED_DOCUMENT_FETCH_LIMIT if token else PUBLIC_DOCUMENT_FETCH_LIMIT
+    )
     async with _github_client(token, client) as github:
         repository = await _request_json(github, f"/repos/{repo}")
         branch = str(repository.get("default_branch") or "main")
@@ -231,14 +250,14 @@ async def _load_relevant_repository_documents(
                 eligible_paths,
                 key=lambda candidate: _path_score(cluster, candidate),
                 reverse=True,
-            )[:5]:
+            )[:paths_per_finding]:
                 if path not in ranked_paths:
                     ranked_paths.append(path)
         if "README.md" in paths and "README.md" not in ranked_paths:
             ranked_paths.append("README.md")
 
         documents: list[RepositoryDocument] = []
-        for path in ranked_paths[:24]:
+        for path in ranked_paths[:document_fetch_limit]:
             response = await _request_json(
                 github,
                 f"/repos/{repo}/contents/{quote(path, safe='/')}",
@@ -263,6 +282,10 @@ async def _load_relevant_repository_documents(
                 )
             )
     return documents
+
+
+def _configured_github_token() -> str | None:
+    return get_github_api_token() or get_settings().github_token
 
 
 def _is_documentation_path(path: str) -> bool:

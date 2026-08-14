@@ -74,7 +74,8 @@ function presentEvent(event: RunEvent, sequence: number): TimelineItem {
         ...base,
         icon: "◈",
         kind: "success",
-        label: `${event.count || 0} documentation sources checked`,
+        label: `${event.inspected_count ?? event.count ?? 0} documentation pages inspected`,
+        detail: `${event.count || 0} relevant sources retained`,
       };
     case "gap_found":
       return {
@@ -108,6 +109,26 @@ function modelLabel(model: string): string {
     .join(" ");
 }
 
+function repositorySlug(value: string): string | null {
+  const normalized = value
+    .trim()
+    .replace(/^https?:\/\/(?:www\.)?github\.com\//i, "")
+    .replace(/^(?:www\.)?github\.com\//i, "")
+    .replace(/\/$/, "");
+  const [owner, rawRepo, ...extra] = normalized.split("/");
+  const repository = rawRepo?.replace(/\.git$/i, "");
+  if (
+    extra.length > 0 ||
+    !owner ||
+    !repository ||
+    !/^[A-Za-z0-9_.-]+$/.test(owner) ||
+    !/^[A-Za-z0-9_.-]+$/.test(repository)
+  ) {
+    return null;
+  }
+  return `${owner}/${repository}`;
+}
+
 export function HomePage() {
   const [repo, setRepo] = useState("");
   const [runId, setRunId] = useState<string | null>(null);
@@ -125,6 +146,10 @@ export function HomePage() {
     null,
   );
   const [gatewayKeyError, setGatewayKeyError] = useState<string | null>(null);
+  const [githubKey, setGitHubKey] = useState("");
+  const [savingGitHubKey, setSavingGitHubKey] = useState(false);
+  const [githubKeyMessage, setGitHubKeyMessage] = useState<string | null>(null);
+  const [githubKeyError, setGitHubKeyError] = useState<string | null>(null);
 
   useEffect(() => {
     void api
@@ -157,6 +182,43 @@ export function HomePage() {
       );
     } finally {
       setSavingGatewayKey(false);
+    }
+  }
+
+  async function saveGitHubKey(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const selectedRepo = repositorySlug(repo);
+    if (!selectedRepo) {
+      setGitHubKeyError("Paste a valid GitHub repository above first.");
+      return;
+    }
+    const apiKey = githubKey.trim();
+    if (!apiKey && !runtimeConfig?.github_configured) {
+      setGitHubKeyError("Enter a fine-grained GitHub access token.");
+      return;
+    }
+
+    setSavingGitHubKey(true);
+    setGitHubKeyMessage(null);
+    setGitHubKeyError(null);
+    try {
+      const config = await api.setGitHubApiKey(
+        selectedRepo,
+        apiKey || undefined,
+      );
+      setRuntimeConfig(config);
+      setGitHubKey("");
+      setGitHubKeyMessage(
+        `Verified read access to ${config.github_verified_repo}.`,
+      );
+    } catch (credentialError) {
+      setGitHubKeyError(
+        credentialError instanceof Error
+          ? credentialError.message
+          : "Could not verify GitHub access.",
+      );
+    } finally {
+      setSavingGitHubKey(false);
     }
   }
 
@@ -210,6 +272,16 @@ export function HomePage() {
 
   async function startRun(event: React.FormEvent) {
     event.preventDefault();
+    const selectedRepo = repositorySlug(repo);
+    const verifiedRepo = runtimeConfig?.github_verified_repo?.toLowerCase();
+    if (!selectedRepo || verifiedRepo !== selectedRepo.toLowerCase()) {
+      setError("Verify GitHub access for this repository before starting.");
+      return;
+    }
+    if (!runtimeConfig?.llm_configured) {
+      setError("Connect the model before starting.");
+      return;
+    }
     setStarting(true);
     setError(null);
     try {
@@ -242,6 +314,19 @@ export function HomePage() {
     run?.top_gaps.map((cluster, index) => ({ cluster, index })) ?? [];
   const displayedGaps =
     persistedGaps.length >= liveGaps.length ? persistedGaps : liveGaps;
+  const selectedRepo = repositorySlug(repo);
+  const repoReady = selectedRepo !== null;
+  const githubReady = Boolean(
+    selectedRepo &&
+    runtimeConfig?.github_configured &&
+    runtimeConfig.github_verified_repo?.toLowerCase() ===
+      selectedRepo.toLowerCase(),
+  );
+  const modelReady = Boolean(runtimeConfig?.llm_configured);
+  const readinessCount = [repoReady, githubReady, modelReady].filter(
+    Boolean,
+  ).length;
+  const readyToRun = readinessCount === 3;
 
   return (
     <>
@@ -318,7 +403,11 @@ export function HomePage() {
                 <input
                   className="hero-cta-input"
                   value={repo}
-                  onChange={(event) => setRepo(event.target.value)}
+                  onChange={(event) => {
+                    setRepo(event.target.value);
+                    setGitHubKeyMessage(null);
+                    setGitHubKeyError(null);
+                  }}
                   placeholder="Paste your repo — owner/repository or URL"
                   autoComplete="off"
                   required
@@ -326,7 +415,12 @@ export function HomePage() {
                 <button
                   type="submit"
                   className="hero-cta-btn"
-                  disabled={starting}
+                  disabled={starting || !readyToRun}
+                  title={
+                    readyToRun
+                      ? "Run DocsHound"
+                      : "Complete the readiness checklist first"
+                  }
                 >
                   {starting ? (
                     "Starting…"
@@ -342,7 +436,191 @@ export function HomePage() {
                   <p>{error}</p>
                 </div>
               ) : null}
-              <details className="hero-model-picker">
+              <section
+                className="run-readiness"
+                aria-label="Run readiness checklist"
+              >
+                <div className="run-readiness-head">
+                  <strong>Ready to run</strong>
+                  <span>{readinessCount} of 3 ready</span>
+                </div>
+                <div className={`readiness-row ${repoReady ? "is-ready" : ""}`}>
+                  <span className="readiness-check" aria-hidden="true">
+                    {repoReady ? "✓" : "1"}
+                  </span>
+                  <span className="readiness-copy">
+                    <strong>Repository</strong>
+                    <small>
+                      {repoReady ? selectedRepo : "Paste a GitHub repository"}
+                    </small>
+                  </span>
+                  <span className="readiness-state">
+                    {repoReady ? "READY" : "REQUIRED"}
+                  </span>
+                </div>
+                <details
+                  className={`readiness-row readiness-connect ${
+                    githubReady ? "is-ready" : ""
+                  }`}
+                >
+                  <summary>
+                    <span className="readiness-check" aria-hidden="true">
+                      {githubReady ? "✓" : "2"}
+                    </span>
+                    <span className="readiness-copy">
+                      <strong>GitHub access</strong>
+                      <small>
+                        {!repoReady
+                          ? "Paste a repository before connecting"
+                          : githubReady
+                            ? `${runtimeConfig?.github_account || "GitHub"} · deep scan enabled`
+                            : runtimeConfig?.github_configured
+                              ? "Verify access to this repository"
+                              : "Connect a read-only token"}
+                      </small>
+                    </span>
+                    <span className="readiness-action">
+                      {!repoReady
+                        ? "WAITING"
+                        : githubReady
+                          ? "CONNECTED"
+                          : "CONNECT"}
+                    </span>
+                  </summary>
+                  <form
+                    className="github-connect-panel"
+                    onSubmit={saveGitHubKey}
+                  >
+                    <div className="github-connect-head">
+                      <div>
+                        <strong>GitHub repository access</strong>
+                        <span>
+                          Verify contents, issues, and pull-request access.
+                        </span>
+                      </div>
+                      <span className="github-depth-badge">DEEP SCAN</span>
+                    </div>
+                    <label htmlFor="github-access-key">
+                      Fine-grained personal access token
+                    </label>
+                    <input
+                      id="github-access-key"
+                      name="githubAccessKey"
+                      type="password"
+                      value={githubKey}
+                      onChange={(event) => setGitHubKey(event.target.value)}
+                      placeholder={
+                        runtimeConfig?.github_configured
+                          ? "Use the connected server token"
+                          : "github_pat_…"
+                      }
+                      autoComplete="off"
+                      spellCheck={false}
+                      disabled={
+                        runtimeConfig?.credential_input_enabled === false ||
+                        savingGitHubKey
+                      }
+                    />
+                    <p>
+                      Use a token with read access to Contents, Issues, Pull
+                      requests, and Metadata. A token entered here is sent to
+                      your local backend, held only in memory, and never
+                      returned to the browser.
+                    </p>
+                    <div className="github-depth-note">
+                      <strong>
+                        Up to {runtimeConfig?.github_document_fetch_limit || 60}{" "}
+                        documents
+                      </strong>
+                      <span>
+                        Best {runtimeConfig?.github_documents_per_finding || 5}{" "}
+                        pages assessed per finding
+                      </span>
+                    </div>
+                    {runtimeConfig?.credential_input_enabled === false ? (
+                      <div
+                        className="hero-model-feedback is-error"
+                        role="alert"
+                      >
+                        Browser key entry is disabled in production. Configure
+                        GITHUB_TOKEN on the server.
+                      </div>
+                    ) : null}
+                    {githubKeyMessage ? (
+                      <div className="hero-model-feedback" role="status">
+                        {githubKeyMessage}
+                      </div>
+                    ) : null}
+                    {githubKeyError ? (
+                      <div
+                        className="hero-model-feedback is-error"
+                        role="alert"
+                      >
+                        {githubKeyError}
+                      </div>
+                    ) : null}
+                    <div className="github-connect-actions">
+                      <a
+                        href="https://github.com/settings/personal-access-tokens/new"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Create token ↗
+                      </a>
+                      <button
+                        type="submit"
+                        disabled={
+                          !repoReady ||
+                          savingGitHubKey ||
+                          (runtimeConfig?.credential_input_enabled === false &&
+                            !runtimeConfig.github_configured)
+                        }
+                      >
+                        {savingGitHubKey
+                          ? "Verifying…"
+                          : runtimeConfig?.github_configured && !githubKey
+                            ? "Verify connection"
+                            : "Connect GitHub"}
+                      </button>
+                    </div>
+                  </form>
+                </details>
+                <div
+                  className={`readiness-row ${modelReady ? "is-ready" : ""}`}
+                >
+                  <span className="readiness-check" aria-hidden="true">
+                    {modelReady ? "✓" : "3"}
+                  </span>
+                  <span className="readiness-copy">
+                    <strong>Model connection</strong>
+                    <small>
+                      {modelReady
+                        ? `${runtimeConfig?.llm_primary_model ? modelLabel(runtimeConfig.llm_primary_model) : "Gemini 3.7 Flash"} connected`
+                        : "Merge Gateway key required"}
+                    </small>
+                  </span>
+                  <button
+                    className="readiness-action"
+                    type="button"
+                    onClick={() => {
+                      const picker =
+                        document.querySelector<HTMLDetailsElement>(
+                          "#model-connection",
+                        );
+                      if (picker) {
+                        picker.open = true;
+                        picker.scrollIntoView({
+                          behavior: "smooth",
+                          block: "center",
+                        });
+                      }
+                    }}
+                  >
+                    {modelReady ? "READY" : "CONFIGURE"}
+                  </button>
+                </div>
+              </section>
+              <details className="hero-model-picker" id="model-connection">
                 <summary>
                   <span
                     className={`hero-model-status ${

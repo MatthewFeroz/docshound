@@ -49,6 +49,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ api_key: apiKey }),
     }),
+  setGitHubApiKey: (repo: string, apiKey?: string) =>
+    request<RuntimeConfig>("/api/v1/config/github-credential", {
+      method: "POST",
+      body: JSON.stringify({ repo, api_key: apiKey || null }),
+    }),
   createRun: (repo: string) =>
     request<CreateRunResponse>("/api/v1/runs", {
       method: "POST",

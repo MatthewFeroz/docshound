@@ -31,6 +31,7 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
                     "pull_requests": [],
                     "clusters": [],
                     "docs_sources": [],
+                    "docs_candidates_inspected": 0,
                     "errors": [],
                     "decisions": [],
                     "researched": False,
@@ -73,6 +74,7 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
     state.docs_sources = [
         DocSource.model_validate(source) for source in result.get("docs_sources", [])
     ]
+    state.docs_candidates_inspected = result.get("docs_candidates_inspected", 0)
     state.decisions = result.get("decisions", [])
     state.errors = result.get("errors", [])
     state.status = "completed_with_errors" if state.errors else "completed"
@@ -86,6 +88,7 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
             "pull_requests_scraped": len(state.pull_requests),
             "clusters_found": len(state.clusters),
             "docs_sources_found": len(state.docs_sources),
+            "docs_candidates_inspected": state.docs_candidates_inspected,
             "errors": state.errors,
         },
     )

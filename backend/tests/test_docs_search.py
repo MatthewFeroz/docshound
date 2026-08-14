@@ -16,7 +16,9 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
         self,
         pages: dict[str, str],
         cluster: GapCluster,
-    ) -> tuple[list[GapCluster], list[str]]:
+        *,
+        authenticated: bool = False,
+    ) -> tuple[list[GapCluster], list[str], list[str], int]:
         requested_paths: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -53,15 +55,24 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
                     "app.tools.docs.get_settings",
                     return_value=SimpleNamespace(github_token=None),
                 ),
+                patch(
+                    "app.tools.docs.get_github_api_token",
+                    return_value="github-token" if authenticated else None,
+                ),
                 patch("app.tools.docs.llm_is_configured", return_value=False),
             ):
-                clusters, _sources = await search_official_docs(
+                clusters, sources, inspected_count = await search_official_docs(
                     "acme/opencode",
                     None,
                     [cluster],
                     client=client,
                 )
-        return clusters, requested_paths
+        return (
+            clusters,
+            requested_paths,
+            [source.repository_path or "" for source in sources],
+            inspected_count,
+        )
 
     async def test_search_ranks_relevant_repository_page_per_finding(self) -> None:
         pages = {
@@ -118,7 +129,7 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 patch("app.tools.docs.llm_is_configured", return_value=False),
             ):
-                clusters, sources = await search_official_docs(
+                clusters, sources, inspected_count = await search_official_docs(
                     "acme/opencode",
                     None,
                     [cluster],
@@ -134,6 +145,7 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
             "packages/web/src/content/docs/tui.mdx",
         )
         self.assertEqual(sources[0].repository_path, coverage.recommended_path)
+        self.assertEqual(inspected_count, 3)
 
     async def test_prefers_canonical_page_over_translated_duplicate(self) -> None:
         pages = {
@@ -154,7 +166,9 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
             confidence=0.8,
         )
 
-        clusters, requested_paths = await self._search_pages(pages, cluster)
+        clusters, requested_paths, _sources, _inspected_count = await self._search_pages(
+            pages, cluster
+        )
 
         coverage = clusters[0].documentation_coverage
         self.assertIsNotNone(coverage)
@@ -192,7 +206,9 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
             confidence=0.8,
         )
 
-        clusters, requested_paths = await self._search_pages(pages, cluster)
+        clusters, requested_paths, _sources, _inspected_count = await self._search_pages(
+            pages, cluster
+        )
 
         coverage = clusters[0].documentation_coverage
         self.assertIsNotNone(coverage)
@@ -209,6 +225,32 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
             ".repos/vendor/website/src/content/docs/tools.mdx",
             requested_paths,
         )
+
+    async def test_authenticated_search_goes_deeper_per_finding(self) -> None:
+        pages = {
+            f"docs/retry-behavior-{index}.md": (
+                f"# Retry behavior {index}\n\nConfigure retry attempts and backoff."
+            )
+            for index in range(14)
+        }
+        cluster = GapCluster(
+            name="Retry behavior",
+            summary="Retry attempts and backoff need documentation.",
+            recurring_question="How do retry attempts work?",
+            issue_numbers=[12],
+            severity="medium",
+            confidence=0.8,
+        )
+
+        _clusters, requested_paths, sources, inspected_count = await self._search_pages(
+            pages,
+            cluster,
+            authenticated=True,
+        )
+
+        self.assertEqual(len(requested_paths), 10)
+        self.assertEqual(len(sources), 5)
+        self.assertEqual(inspected_count, 10)
 
     async def test_documented_finding_is_kept_without_creating_a_draft(self) -> None:
         cluster = GapCluster(

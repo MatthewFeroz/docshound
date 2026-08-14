@@ -12,8 +12,8 @@ The project contains two independently deployable applications:
 - `frontend/` — React, TypeScript, and Vite static application
 - `backend/` — FastAPI JSON/SSE API and agent runtime
 
-The browser never receives model-provider, Merge Gateway, or GitHub
-credentials. All secrets stay in the backend runtime.
+Credentials submitted through the local connection panels are sent directly to
+the backend, held only in process memory, and never returned by the API.
 
 ## Product flow
 
@@ -80,7 +80,7 @@ existing local installations):
 
 ```text
 APP_ENV=development   # set to production to disable browser key entry
-GITHUB_TOKEN=          # optional: higher read limits
+GITHUB_TOKEN=          # authenticated deep documentation scans
 GITHUB_WRITE_TOKEN=    # optional: create documentation branches and PRs
 MERGE_GATEWAY_API_KEY= # recommended: model-based analysis through Gateway
 MERGE_GATEWAY_PRIMARY_MODEL=google/gemini-3.7-flash
@@ -107,11 +107,14 @@ Values prefixed with `VITE_` are public and embedded in the browser bundle.
 Never place Merge Gateway, model-provider, or GitHub credentials in the
 frontend environment.
 
-In local development, the homepage connection menu can send a Merge Gateway
-key to the backend. That override is held only in backend process memory and is
-cleared on restart. Browser credential entry is disabled when `APP_ENV` is
-`production`; production deployments should inject `MERGE_GATEWAY_API_KEY`
-through the server's secret manager.
+In local development, the homepage readiness checklist can verify a read-only
+GitHub token against the selected repository and the model connection menu can
+send a Merge Gateway key to the backend. These overrides are held only in
+backend process memory and cleared on restart. An authenticated documentation
+search ranks up to ten paths per finding, downloads up to sixty unique pages,
+and assesses the best five pages per finding. Browser credential entry is
+disabled when `APP_ENV` is `production`; production deployments should inject
+`GITHUB_TOKEN` and `MERGE_GATEWAY_API_KEY` through the server's secret manager.
 
 ### OpenTelemetry and OpenInference tracing
 
