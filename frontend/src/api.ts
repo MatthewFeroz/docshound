@@ -44,6 +44,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   getRuntimeConfig: () => request<RuntimeConfig>("/api/v1/config"),
+  setMergeGatewayApiKey: (apiKey: string) =>
+    request<RuntimeConfig>("/api/v1/config/llm-credential", {
+      method: "POST",
+      body: JSON.stringify({ api_key: apiKey }),
+    }),
   createRun: (repo: string) =>
     request<CreateRunResponse>("/api/v1/runs", {
       method: "POST",

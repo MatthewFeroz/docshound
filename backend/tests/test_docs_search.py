@@ -1,11 +1,11 @@
 import base64
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from app.langgraph_agent import _safe_next_action
+from app.langgraph_agent import _safe_next_action, llm_decide
 from app.state import DocumentationCoverage, GapCluster
 from app.tools.cluster import draft_review_documents
 from app.tools.docs import search_official_docs
@@ -178,6 +178,9 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
             "packages/app/e2e/performance/README.md": (
                 "# Manual app performance suite\n\nMeasure shell rendering output."
             ),
+            ".repos/vendor/website/src/content/docs/tools.mdx": (
+                "# Vendored tools\n\nDocumentation owned by an embedded repository."
+            ),
             "README.md": "# OpenCode\n\nAn AI coding agent.",
         }
         cluster = GapCluster(
@@ -200,6 +203,10 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("packages/opencode/src/sync/README.md", requested_paths)
         self.assertNotIn(
             "packages/app/e2e/performance/README.md",
+            requested_paths,
+        )
+        self.assertNotIn(
+            ".repos/vendor/website/src/content/docs/tools.mdx",
             requested_paths,
         )
 
@@ -258,6 +265,33 @@ class WorkflowOrderingTests(unittest.TestCase):
             ),
             "store",
         )
+
+
+class WorkflowCompletionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_terminal_workflow_skips_an_extra_model_request(self) -> None:
+        state = {
+            "run_id": "run-complete",
+            "repo": "pingdotgg/t3code",
+            "researched": True,
+            "analyzed": True,
+            "docs_searched": True,
+            "drafted": True,
+            "decisions": [],
+            "errors": [],
+        }
+
+        with (
+            patch("app.langgraph_agent.llm_is_configured", return_value=True),
+            patch(
+                "app.langgraph_agent.complete_json",
+                new_callable=AsyncMock,
+            ) as complete_json,
+        ):
+            result = await llm_decide(state)
+
+        self.assertEqual(result["next_action"], "store")
+        self.assertIn("without another model request", result["decision_reason"])
+        complete_json.assert_not_awaited()
 
 
 if __name__ == "__main__":

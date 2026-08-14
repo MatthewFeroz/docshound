@@ -97,9 +97,6 @@ export function ShowcasePage() {
       <main className="showcase-main">
         <section className="showcase-hero" id="top">
           <div className="showcase-hero-copy">
-            <div className="showcase-eyebrow">
-              <span className="showcase-live-dot" /> LangGraph in production
-            </div>
             <h1>
               Documentation that keeps up with <em>what you ship.</em>
             </h1>

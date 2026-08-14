@@ -18,7 +18,7 @@ describe("DocsHound frontend", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the DocsHound product showcase", () => {
+  it("redirects the former showcase route to the consolidated homepage", async () => {
     render(
       <MemoryRouter initialEntries={["/showcase"]}>
         <App />
@@ -26,12 +26,10 @@ describe("DocsHound frontend", () => {
     );
 
     expect(
-      screen.getByRole("heading", {
-        name: /documentation that keeps up with what you ship/i,
+      await screen.findByRole("heading", {
+        name: /see the evidence, the decisions, and the draft/i,
       }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: /a stateful loop/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /github/i })).toBeInTheDocument();
   });
 });

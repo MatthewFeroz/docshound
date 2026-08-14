@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import {
+  type CSSProperties,
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
 import { Link } from "react-router-dom";
 
 import { api, subscribeToRun } from "../api";
@@ -113,6 +119,12 @@ export function HomePage() {
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig | null>(
     null,
   );
+  const [gatewayKey, setGatewayKey] = useState("");
+  const [savingGatewayKey, setSavingGatewayKey] = useState(false);
+  const [gatewayKeyMessage, setGatewayKeyMessage] = useState<string | null>(
+    null,
+  );
+  const [gatewayKeyError, setGatewayKeyError] = useState<string | null>(null);
 
   useEffect(() => {
     void api
@@ -120,6 +132,33 @@ export function HomePage() {
       .then(setRuntimeConfig)
       .catch(() => undefined);
   }, []);
+
+  async function saveGatewayKey(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const apiKey = gatewayKey.trim();
+    if (!apiKey) {
+      setGatewayKeyError("Enter a Merge Gateway API key.");
+      return;
+    }
+
+    setSavingGatewayKey(true);
+    setGatewayKeyMessage(null);
+    setGatewayKeyError(null);
+    try {
+      const config = await api.setMergeGatewayApiKey(apiKey);
+      setRuntimeConfig(config);
+      setGatewayKey("");
+      setGatewayKeyMessage("Connected for this local server session.");
+    } catch (credentialError) {
+      setGatewayKeyError(
+        credentialError instanceof Error
+          ? credentialError.message
+          : "Could not save the key.",
+      );
+    } finally {
+      setSavingGatewayKey(false);
+    }
+  }
 
   const refreshRun = useCallback(async (id: string) => {
     try {
@@ -206,22 +245,67 @@ export function HomePage() {
 
   return (
     <>
-      <BrandHeader tagline="Repository activity → reviewed documentation">
-        <div className="top-actions">
-          <Link className="showcase-link" to="/showcase">
-            Product tour
-          </Link>
-          <Link className="published-link" to="/findings">
-            Browse findings →
-          </Link>
-        </div>
+      <BrandHeader className="home-toolbar">
+        <nav className="home-nav" aria-label="Homepage navigation">
+          <a href="#overview">Product</a>
+          <a href="#workflow">Workflow</a>
+          <a href="#grounding">Grounding</a>
+          <Link to="/findings">Findings</Link>
+          <a
+            className="home-github-link"
+            href="https://github.com/MatthewFeroz/docshound"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 .7a11.3 11.3 0 0 0-3.57 22.02c.57.1.78-.25.78-.55v-2.2c-3.18.7-3.85-1.35-3.85-1.35-.52-1.33-1.27-1.68-1.27-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.75 1.18 1.75 1.18 1.02 1.74 2.68 1.24 3.34.95.1-.74.4-1.24.73-1.53-2.54-.29-5.21-1.27-5.21-5.65 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.11 1.17a10.8 10.8 0 0 1 5.67 0c2.16-1.48 3.1-1.17 3.1-1.17.63 1.57.24 2.73.12 3.02.73.8 1.17 1.82 1.17 3.07 0 4.39-2.68 5.35-5.23 5.64.41.36.78 1.05.78 2.12v3.2c0 .3.2.66.79.55A11.3 11.3 0 0 0 12 .7Z" />
+            </svg>
+            GitHub <span aria-hidden="true">↗</span>
+          </a>
+        </nav>
       </BrandHeader>
       <main id="run-mount">
         {!runId ? (
           <>
             <section className="hero-v2">
               <h2 className="hero-title">
-                Turn <em>repository activity</em>
+                Turn{" "}
+                <span
+                  className="source-rotator"
+                  aria-label="open issues, merged pull requests, shipped changes, and recurring questions"
+                >
+                  <span className="source-sizer" aria-hidden="true">
+                    merged pull requests
+                  </span>
+                  <em
+                    className="source-word"
+                    style={{ "--source-index": 0 } as CSSProperties}
+                    aria-hidden="true"
+                  >
+                    open issues
+                  </em>
+                  <em
+                    className="source-word"
+                    style={{ "--source-index": 1 } as CSSProperties}
+                    aria-hidden="true"
+                  >
+                    merged pull requests
+                  </em>
+                  <em
+                    className="source-word"
+                    style={{ "--source-index": 2 } as CSSProperties}
+                    aria-hidden="true"
+                  >
+                    shipped changes
+                  </em>
+                  <em
+                    className="source-word"
+                    style={{ "--source-index": 3 } as CSSProperties}
+                    aria-hidden="true"
+                  >
+                    recurring questions
+                  </em>
+                </span>
                 <br />
                 into citeable documentation.
               </h2>
@@ -258,28 +342,165 @@ export function HomePage() {
                   <p>{error}</p>
                 </div>
               ) : null}
-              <div className="hero-trust">
-                <span className="hero-trust-dot" />
-                <span>Live now</span>
-                <span className="hero-trust-sep">·</span>
-                <span>Real repository evidence</span>
-                {runtimeConfig?.llm_primary_model ? (
-                  <>
-                    <span className="hero-trust-sep">·</span>
-                    <span>
-                      {modelLabel(runtimeConfig.llm_primary_model)}
-                      {runtimeConfig.llm_gateway === "merge"
-                        ? " via Merge Gateway"
-                        : ""}
-                      {runtimeConfig.llm_fallback_model
-                        ? ` · ${modelLabel(runtimeConfig.llm_fallback_model)} fallback`
-                        : ""}
+              <details className="hero-model-picker">
+                <summary>
+                  <span
+                    className={`hero-model-status ${
+                      runtimeConfig?.llm_configured ? "is-connected" : ""
+                    }`}
+                  />
+                  <span className="hero-model-name">
+                    {runtimeConfig?.llm_primary_model
+                      ? modelLabel(runtimeConfig.llm_primary_model)
+                      : "Gemini 3.7 Flash"}
+                  </span>
+                  <span className="hero-model-via">via Merge Gateway</span>
+                  <span className="hero-model-chevron" aria-hidden="true">
+                    ▾
+                  </span>
+                </summary>
+                <form className="hero-model-menu" onSubmit={saveGatewayKey}>
+                  <div className="hero-model-menu-head">
+                    <div>
+                      <strong>Model connection</strong>
+                      <span>
+                        {runtimeConfig?.llm_configured
+                          ? "Connected"
+                          : "API key required"}
+                      </span>
+                    </div>
+                    <span
+                      className={`hero-model-badge ${
+                        runtimeConfig?.llm_configured ? "is-connected" : ""
+                      }`}
+                    >
+                      {runtimeConfig?.llm_configured ? "READY" : "SETUP"}
                     </span>
-                  </>
-                ) : null}
+                  </div>
+                  <label htmlFor="merge-gateway-key">
+                    Merge Gateway API key
+                  </label>
+                  <input
+                    id="merge-gateway-key"
+                    name="mergeGatewayApiKey"
+                    type="password"
+                    value={gatewayKey}
+                    onChange={(event) => setGatewayKey(event.target.value)}
+                    placeholder="Enter your key"
+                    autoComplete="off"
+                    spellCheck={false}
+                    disabled={
+                      runtimeConfig?.credential_input_enabled === false ||
+                      savingGatewayKey
+                    }
+                    required
+                  />
+                  <p>
+                    Sent to your local DocsHound backend and held only in memory
+                    until the server restarts.
+                  </p>
+                  {runtimeConfig?.credential_input_enabled === false ? (
+                    <div className="hero-model-feedback is-error" role="alert">
+                      Browser key entry is disabled in production. Configure the
+                      server secret instead.
+                    </div>
+                  ) : null}
+                  {gatewayKeyMessage ? (
+                    <div className="hero-model-feedback" role="status">
+                      {gatewayKeyMessage}
+                    </div>
+                  ) : null}
+                  {gatewayKeyError ? (
+                    <div className="hero-model-feedback is-error" role="alert">
+                      {gatewayKeyError}
+                    </div>
+                  ) : null}
+                  <button
+                    type="submit"
+                    disabled={
+                      runtimeConfig?.credential_input_enabled === false ||
+                      savingGatewayKey
+                    }
+                  >
+                    {savingGatewayKey ? "Connecting…" : "Save connection"}
+                  </button>
+                </form>
+              </details>
+              <div className="hero-agent-orbit" aria-hidden="true">
+                <div className="hero-agent-float hero-agent-opencode">
+                  <div className="hero-agent-tile">
+                    <img
+                      src="/logos/opencode-mark.svg"
+                      alt=""
+                      draggable="false"
+                    />
+                  </div>
+                </div>
+                <div className="hero-agent-float hero-agent-deepagents">
+                  <div className="hero-agent-tile">
+                    <img
+                      src="/logos/deepagents-mark.svg"
+                      alt=""
+                      draggable="false"
+                    />
+                  </div>
+                </div>
+                <div className="hero-agent-float hero-agent-pi">
+                  <div className="hero-agent-tile">
+                    <img src="/logos/pi-mark.svg" alt="" draggable="false" />
+                  </div>
+                </div>
+                <div className="hero-agent-float hero-agent-t3">
+                  <div className="hero-agent-tile">
+                    <img
+                      src="/logos/t3-code-mark.svg"
+                      alt=""
+                      draggable="false"
+                    />
+                  </div>
+                </div>
               </div>
+              <aside
+                className="hero-floater hero-floater-left"
+                aria-hidden="true"
+              >
+                <div className="floater-card">
+                  <div className="floater-kicker">
+                    <span className="floater-sev floater-sev-high">HIGH</span>
+                    <span className="floater-repo">acme/sdk-python</span>
+                  </div>
+                  <div className="floater-title">
+                    Async tracing not propagating across tasks
+                  </div>
+                  <div className="floater-question">
+                    &quot;Why are my async spans missing?&quot;
+                  </div>
+                  <div className="floater-meta">
+                    12 issues clustered · 4s ago
+                  </div>
+                </div>
+              </aside>
+              <aside
+                className="hero-floater hero-floater-right"
+                aria-hidden="true"
+              >
+                <div className="floater-card">
+                  <div className="floater-kicker">
+                    <span className="floater-status">APPROVED</span>
+                    <span className="floater-repo">Markdown document</span>
+                  </div>
+                  <div className="floater-title">
+                    Tracing async generators in 3 steps
+                  </div>
+                  <div className="floater-question">
+                    Ready to copy into any documentation system
+                  </div>
+                  <div className="floater-meta">Draft → review → approve</div>
+                </div>
+              </aside>
             </section>
-            <HowItWorks />
+            <ProductPreview />
+            <HomeOverview />
           </>
         ) : (
           <section className="run-panel">
@@ -342,52 +563,291 @@ export function HomePage() {
   );
 }
 
-function HowItWorks() {
-  const steps = [
-    ["Collect", "issues and merged pull requests from a public repository"],
-    ["Identify", "open gaps and shipped changes that need documentation"],
-    ["Check", "the existing documentation for coverage and evidence"],
-    ["Draft", "a citeable answer for human review"],
-    ["Publish", "approved Markdown through a documentation pull request"],
+function ProductPreview() {
+  const timeline = [
+    ["✓", "Repository research complete", "42 issues · 18 merged PRs"],
+    ["✓", "9 documentation needs clustered", "5 gaps · 4 shipped changes"],
+    ["◆", "Agent decision → search_docs", "Check coverage before drafting"],
+    ["◈", "3 documentation sources checked", "Canonical English pages"],
   ];
+
   return (
-    <section className="placeholder">
-      <div className="hero">
-        <div className="hero-card">
-          <span className="hero-eyebrow">How it works</span>
-          <h2>
-            From <em>repository activity</em> to citeable documentation.
-          </h2>
-          <p className="hero-lede">
-            DocsHound checks recent repository activity, finds missing answers,
-            and drafts grounded guidance for review.
-          </p>
-          <ul className="hero-steps">
-            {steps.map(([title, detail], index) => (
-              <li key={title}>
-                <span className="step-num">{index + 1}</span>
-                <span>
-                  <strong>{title}</strong> {detail}
-                </span>
-              </li>
-            ))}
-          </ul>
+    <section className="home-product-section" id="overview">
+      <div className="home-section-heading">
+        <span>THE PRODUCT</span>
+        <h2>See the evidence, the decisions, and the draft in one place.</h2>
+        <p>
+          A live agent timeline sits beside the finding it produced, so every
+          proposed documentation change remains explainable and reviewable.
+        </p>
+      </div>
+
+      <div
+        className="home-product-window"
+        aria-label="DocsHound product preview"
+      >
+        <div className="home-window-toolbar">
+          <div className="home-window-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="home-window-title">
+            <img src="/logos/docshound.png" alt="" />
+            <strong>DocsHound</strong>
+            <code>anomalyco/opencode</code>
+          </div>
+          <span className="home-window-live">
+            <i /> running
+          </span>
         </div>
-        <aside className="hero-flow" aria-label="Pipeline preview">
-          <div className="flow-title">Pipeline preview</div>
-          {steps.map(([title, detail], index) => (
-            <div className="flow-step" key={title}>
-              <div className="flow-icon">
-                <span>{index + 1}</span>
+
+        <div className="home-product-body">
+          <aside className="home-preview-timeline">
+            <header>
+              <span>Agent timeline</span>
+              <code>run 7f21a9c4</code>
+            </header>
+            <ol>
+              {timeline.map(([icon, title, detail], index) => (
+                <li className={index === 2 ? "is-active" : ""} key={title}>
+                  <span>{icon}</span>
+                  <div>
+                    <strong>{title}</strong>
+                    <small>{detail}</small>
+                  </div>
+                  <code>
+                    {index === 2 ? "now" : `${index + 1}.${index + 4}s`}
+                  </code>
+                </li>
+              ))}
+            </ol>
+            <div className="home-preview-route">
+              <span>MODEL ROUTE</span>
+              <strong>Gemini 3.7 Flash</strong>
+              <small>via Merge Gateway</small>
+            </div>
+          </aside>
+
+          <article className="home-preview-finding">
+            <div className="home-preview-topline">
+              <span className="home-preview-severity">HIGH</span>
+              <span>SHIPPED CHANGE</span>
+              <span>94% confidence</span>
+            </div>
+            <h3>Webhook retry behavior</h3>
+            <p className="home-preview-question">
+              “How does exponential backoff work after a failed delivery?”
+            </p>
+
+            <div className="home-preview-coverage">
+              <div>
+                <span>Documentation coverage</span>
+                <strong>Related page needs an update</strong>
               </div>
-              <div className="flow-body">
-                <div className="flow-name">{title}</div>
-                <div className="flow-detail">{detail}</div>
+              <code>PARTIAL</code>
+            </div>
+
+            <div className="home-preview-evidence">
+              <span>REPOSITORY EVIDENCE</span>
+              <div>
+                <strong>#842 Webhook delivery retries</strong>
+                <small>open · 14 comments</small>
+              </div>
+              <div>
+                <strong>PR #791 Add exponential backoff</strong>
+                <small>merged · source linked</small>
+              </div>
+              <div>
+                <strong>Webhook delivery guide</strong>
+                <small>guides/webhooks.mdx</small>
               </div>
             </div>
-          ))}
-        </aside>
+
+            <div className="home-preview-draft">
+              <span>HUMAN REVIEW DRAFT</span>
+              <strong>Configure webhook retries</strong>
+              <p>
+                Failed deliveries are retried with exponential backoff. Each
+                attempt preserves the original event payload…
+              </p>
+            </div>
+
+            <footer className="home-preview-actions">
+              <span>Reject</span>
+              <strong>Approve and open →</strong>
+            </footer>
+          </article>
+        </div>
+      </div>
+
+      <div className="home-product-proof" aria-label="Product capabilities">
+        <span>Live SSE progress</span>
+        <span>Repository-backed evidence</span>
+        <span>Editable Markdown</span>
+        <span>Exact PR patch</span>
       </div>
     </section>
+  );
+}
+
+function HomeOverview() {
+  const steps = [
+    ["Research", "GitHub", "Collect open issues and merged pull requests."],
+    ["Analyze", "Agent", "Group recurring questions and shipped changes."],
+    ["Check docs", "Search", "Classify existing coverage before writing."],
+    ["Draft", "Markdown", "Write only the missing or outdated guidance."],
+    ["Review + publish", "Human", "Approve an exact repository patch and PR."],
+  ];
+
+  return (
+    <div className="home-overview">
+      <section className="home-workflow-section" id="workflow">
+        <div className="home-section-heading home-heading-split">
+          <div>
+            <span>HOW IT WORKS</span>
+            <h2>From noisy repository activity to one useful docs change.</h2>
+          </div>
+          <p>
+            DocsHound follows an explicit sequence with a recorded decision
+            between every stage. The workflow can explain why it searched,
+            drafted, skipped, or stopped.
+          </p>
+        </div>
+
+        <ol className="home-workflow-grid">
+          {steps.map(([title, tool, detail], index) => (
+            <li key={title}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <code>{tool}</code>
+              <h3>{title}</h3>
+              <p>{detail}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section className="home-grounding-section" id="grounding">
+        <div className="home-grounding-copy">
+          <span>GROUNDING</span>
+          <h2>Search first. Draft second.</h2>
+          <p>
+            A GitHub question is not automatically a documentation gap.
+            DocsHound searches canonical first-party pages, excludes unrelated
+            package READMEs, and writes only the delta.
+          </p>
+          <ul>
+            <li>
+              <i className="is-missing" />
+              <div>
+                <strong>Missing</strong>
+                <small>Create a focused new page</small>
+              </div>
+            </li>
+            <li>
+              <i className="is-partial" />
+              <div>
+                <strong>Partial</strong>
+                <small>Update the relevant existing page</small>
+              </div>
+            </li>
+            <li>
+              <i className="is-documented" />
+              <div>
+                <strong>Documented</strong>
+                <small>Keep the audit trail and skip the draft</small>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div className="home-grounding-panel">
+          <header>
+            <span>EVIDENCE PACKET</span>
+            <code>3 linked sources</code>
+          </header>
+          <div className="home-grounding-source">
+            <span>ISSUE</span>
+            <div>
+              <strong>#842 Webhook delivery retries</strong>
+              <small>Recurring user question</small>
+            </div>
+          </div>
+          <div className="home-grounding-source">
+            <span className="is-pr">PR</span>
+            <div>
+              <strong>#791 Add exponential backoff</strong>
+              <small>Confirmed shipped behavior</small>
+            </div>
+          </div>
+          <div className="home-grounding-source">
+            <span className="is-doc">DOC</span>
+            <div>
+              <strong>Webhook delivery guide</strong>
+              <small>Canonical English page · partial coverage</small>
+            </div>
+          </div>
+          <div className="home-grounding-result">
+            <span>RECOMMENDED ACTION</span>
+            <strong>Update guides/webhooks.mdx</strong>
+            <code>update_page</code>
+          </div>
+        </div>
+      </section>
+
+      <section className="home-controls-section">
+        <div className="home-section-heading">
+          <span>CONTROL + CONFIDENCE</span>
+          <h2>The agent proposes. A person publishes.</h2>
+          <p>
+            The generation is useful because every output stays inspectable from
+            source evidence through the final GitHub pull request.
+          </p>
+        </div>
+        <div className="home-control-grid">
+          <article>
+            <span>01</span>
+            <h3>Evidence attached</h3>
+            <p>
+              Issues, merged changes, and relevant docs travel with the draft.
+            </p>
+          </article>
+          <article>
+            <span>02</span>
+            <h3>Human approval gate</h3>
+            <p>Edit, approve, or reject before any repository write occurs.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <h3>Exact patch preview</h3>
+            <p>
+              Inspect the target path, format, branch, and diff before the PR.
+            </p>
+          </article>
+          <article>
+            <span>04</span>
+            <h3>Traceable end to end</h3>
+            <p>OpenTelemetry records agent, tool, and model spans safely.</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="home-final-cta">
+        <img src="/logos/docshound.png" alt="" />
+        <span>FROM SIGNAL TO SOURCE OF TRUTH</span>
+        <h2>Let the repository tell you what the docs are missing.</h2>
+        <p>
+          Paste a public GitHub repository and watch DocsHound show its work.
+        </p>
+        <div>
+          <a className="home-final-primary" href="#run-mount">
+            Run DocsHound ↑
+          </a>
+          <Link className="home-final-secondary" to="/findings">
+            Browse findings
+          </Link>
+        </div>
+      </section>
+    </div>
   );
 }

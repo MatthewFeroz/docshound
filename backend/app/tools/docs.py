@@ -269,6 +269,8 @@ def _is_documentation_path(path: str) -> bool:
     pure = PurePosixPath(path)
     if pure.suffix.lower() not in DOC_EXTENSIONS:
         return False
+    if any(part.startswith(".") for part in pure.parts[:-1]):
+        return False
     if pure.name.lower() in {"readme.md", "readme.mdx"}:
         return True
     lowered_parts = {part.lower() for part in pure.parts[:-1]}

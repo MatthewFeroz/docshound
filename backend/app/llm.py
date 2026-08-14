@@ -9,6 +9,7 @@ from openai import AsyncOpenAI
 from opentelemetry import trace
 
 from app.config import Settings, get_settings
+from app.runtime_credentials import get_merge_gateway_api_key
 
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,9 @@ def get_llm_route(settings: Settings | Any | None = None) -> LLMRoute | None:
     through its OpenAI-compatible endpoint with Gemini first.
     """
     settings = settings or get_settings()
-    gateway_key = getattr(settings, "merge_gateway_api_key", None)
+    gateway_key = get_merge_gateway_api_key() or getattr(
+        settings, "merge_gateway_api_key", None
+    )
     if gateway_key:
         models = tuple(
             model
