@@ -11,4 +11,4 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-npm --prefix "${ROOT}/frontend" run dev
+bun run --cwd "${ROOT}/frontend" dev

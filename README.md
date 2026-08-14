@@ -37,7 +37,7 @@ Documentation pull request
 
 ## Run locally
 
-Requires Python 3.11+, Node.js 20.19+ (or 22.12+), and npm.
+Requires Python 3.11+ and Bun 1.3+.
 
 Set up the backend:
 
@@ -53,7 +53,7 @@ Set up the frontend:
 
 ```bash
 cd frontend
-npm install
+bun install
 cd ..
 ```
 
@@ -70,7 +70,7 @@ You can also run each application independently:
 
 ```bash
 ./backend/run.sh
-npm --prefix frontend run dev
+bun run --cwd frontend dev
 ```
 
 ## Backend configuration
@@ -225,10 +225,10 @@ Run frontend checks:
 
 ```bash
 cd frontend
-npm run format:check
-npm run typecheck
-npm test
-npm run build
+bun run format:check
+bun run typecheck
+bun run test
+bun run build
 ```
 
 ## Project structure
