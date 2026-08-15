@@ -16,18 +16,14 @@ From the DocsHound repository root:
 Stop any ordinary `./run.sh` process first; the demo launch deliberately fails
 instead of silently switching ports when `5173` or `8000` is already occupied.
 
-That command starts a local Phoenix trace viewer, runs every preflight check,
-enables the pinned OpenCode scenario, and launches the backend and frontend.
+That command selects the `docshound-opencode-demo` LangSmith project, runs every
+preflight check, enables the pinned OpenCode scenario, and launches the backend
+and frontend.
 
 - DocsHound: <http://127.0.0.1:5173>
-- OpenInference traces: <http://127.0.0.1:6006>
+- Traces: <https://smith.langchain.com>
 
-Stop DocsHound with `Ctrl+C`. Phoenix stays available between rehearsals so
-the trace history remains visible. Stop it separately with:
-
-```bash
-./demo/phoenix.sh stop
-```
+Stop DocsHound with `Ctrl+C`. Trace history remains available in LangSmith.
 
 ## Credentials
 
@@ -36,13 +32,14 @@ Put these in the root `.env` or `backend/.env` before running the demo:
 ```text
 GITHUB_TOKEN=github_pat_...
 MERGE_GATEWAY_API_KEY=...
+LANGSMITH_API_KEY=lsv2_...
 ```
 
 Use one GitHub token that can read the public OpenCode repository and can write
 to `MatthewFeroz/opencode`. The fork needs Contents and Pull requests read/write
-access. The preflight validates the authenticated account, the fork relationship,
-push permission, live model access, and the exact source files without printing
-either secret.
+access. The preflight validates the authenticated account, fork relationship,
+push permission, live model access, LangSmith access, and the exact source files
+without printing any secret.
 
 ## Stage flow
 
@@ -62,17 +59,17 @@ either secret.
    `packages/web/src/content/docs/cli.mdx`.
 7. Create the pull request in `MatthewFeroz/opencode`.
 
-Open Phoenix during the run and choose the `docshound-opencode-demo` project to
-show the agent, tool, chain, and model spans. The repository source references
-are recorded on the analysis spans without copying issue or document bodies into
-DocsHound's custom span attributes.
+Open LangSmith during the run and choose the `docshound-opencode-demo` project
+to show the agent, tool, chain, and model spans. These are the same
+OpenTelemetry spans DocsHound can later route to another OTLP backend, enriched
+with OpenInference semantics. Repository source references are recorded on the
+analysis spans without copying issue or document bodies into custom attributes.
 
 ## Rehearsal commands
 
 Run the checks without launching the product:
 
 ```bash
-./demo/phoenix.sh start
 ./demo/preflight.sh opencode
 ```
 
@@ -88,13 +85,6 @@ live issues and merged PR, requires two findings that cover every pinned source,
 searches the fork's full documentation corpus, drafts both changes, and proves
 that each patch updates the existing `packages/web/src/content/docs/cli.mdx`.
 It uses a temporary local database and deletes it afterward.
-
-Inspect the local trace service:
-
-```bash
-./demo/phoenix.sh status
-./demo/phoenix.sh logs
-```
 
 The preflight intentionally warns, but does not mutate anything, when the fork
 is behind upstream. To bring the fork's `dev` branch current before rehearsal,
@@ -123,9 +113,10 @@ gh repo sync MatthewFeroz/opencode --source anomalyco/opencode --branch dev
   model output are stored as fixtures. A source-coverage guardrail links issue
   `#42484` to its earlier implementation PR and prevents a model response from
   silently dropping a pinned issue.
-- [`compose.yaml`](compose.yaml) runs the pinned Phoenix image with persistent
-  local storage. [`run.sh`](run.sh) sends OTLP/HTTP traces to it and groups them
-  under `docshound-opencode-demo`.
+- [`run.sh`](run.sh) selects `docshound-opencode-demo` as the LangSmith project.
+  The backend sends its canonical OpenTelemetry/OpenInference spans directly to
+  LangSmith over OTLP; an explicit standard OTLP endpoint can replace that
+  destination later without changing agent instrumentation.
 - [`research/opencode-sources.md`](research/opencode-sources.md) records why
   these sources were selected and the code/documentation evidence behind them.
 

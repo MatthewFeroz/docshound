@@ -21,6 +21,12 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 SCENARIO_DIRECTORY = ROOT / "demo" / "scenarios"
+sys.path.insert(0, str(ROOT / "backend"))
+
+from app.tracing_config import (  # noqa: E402
+    DEFAULT_LANGSMITH_ENDPOINT,
+    resolve_trace_export_config,
+)
 
 
 @dataclass(frozen=True)
@@ -154,7 +160,7 @@ def _contents_path(repository: str, path: str) -> str:
 
 
 def check_toolchain(report: Report, *, require_free_app_ports: bool) -> None:
-    for command in ("git", "bun", "docker"):
+    for command in ("git", "bun"):
         executable = shutil.which(command)
         if executable:
             report.pass_(f"tool:{command}", executable)
@@ -169,16 +175,6 @@ def check_toolchain(report: Report, *, require_free_app_ports: bool) -> None:
         report.pass_("frontend dependencies", "frontend/node_modules is installed")
     else:
         report.fail("frontend dependencies", "Run: bun install --cwd frontend")
-    compose = subprocess.run(
-        ["docker", "compose", "version"],
-        capture_output=True,
-        text=True,
-        check=False,
-    ) if shutil.which("docker") else None
-    if compose and compose.returncode == 0:
-        report.pass_("tool:docker compose", compose.stdout.strip())
-    else:
-        report.fail("tool:docker compose", "Install the Docker Compose plugin.")
     if require_free_app_ports:
         for port, service in ((8000, "backend"), (5173, "frontend")):
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -439,7 +435,7 @@ from app.tracing import run_traced, set_run_output, setup_tracing, traced_run
 async def main():
     repository = os.environ['DOCSHOUND_PREFLIGHT_REPOSITORY']
     run_id = f"demo-preflight-{os.environ['DOCSHOUND_DEMO_SCENARIO']}"
-    setup_tracing()
+    tracing_enabled = setup_tracing()
     with traced_run(run_id, repository) as span:
         issues, pull_requests = await asyncio.gather(
             run_traced(
@@ -484,14 +480,15 @@ async def main():
         for finding in findings
         for reference in [*finding.issue_refs, *finding.pr_refs]
     ]
+    provider = trace_api.get_tracer_provider()
+    if hasattr(provider, "force_flush"):
+        provider.force_flush()
     print(json.dumps({
         "source_refs": source_refs,
         "covered_refs": covered_refs,
         "finding_count": len(findings),
+        "tracing_enabled": tracing_enabled,
     }))
-    provider = trace_api.get_tracer_provider()
-    if hasattr(provider, "force_flush"):
-        provider.force_flush()
 
 
 asyncio.run(main())
@@ -530,41 +527,21 @@ asyncio.run(main())
         f"{len(source_refs)}/{len(source_refs)} sources represented in "
         f"{payload.get('finding_count', 0)} findings via {model}",
     )
-    endpoint = environment.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").rstrip("/")
-    project_name = f"docshound-{scenario_name}-demo"
-    headers = environment.get("OTEL_EXPORTER_OTLP_HEADERS", "")
-    if endpoint in {"http://127.0.0.1:6006", "http://localhost:6006"} and (
-        f"x-project-name={project_name}" in headers
-    ):
-        try:
-            traces, _ = _request_json(
-                f"{endpoint}/v1/projects/"
-                f"{urllib.parse.quote(project_name, safe='')}/spans?limit=100",
-                headers={"Accept": "application/json"},
-            )
-            span_names = {
-                str(item.get("name") or "") for item in traces.get("data", [])
-            }
-            required_spans = {
-                "docshound.agent",
-                "tool.research_repo",
-                "tool.research_pull_requests",
-                "tool.cluster_issues",
-                "ChatCompletion",
-            }
-            missing_spans = sorted(required_spans - span_names)
-            if missing_spans:
-                report.fail(
-                    "Phoenix trace probe",
-                    f"Export omitted spans: {', '.join(missing_spans)}",
-                )
-            else:
-                report.pass_(
-                    "Phoenix trace probe",
-                    f"{len(span_names)} span names visible in {project_name}",
-                )
-        except RuntimeError as exc:
-            report.fail("Phoenix trace probe", str(exc))
+    export_error = next(
+        (
+            line.strip()
+            for line in probe.stderr.splitlines()
+            if "Failed to export span batch" in line
+            or "Exception while exporting Span" in line
+        ),
+        None,
+    )
+    if not payload.get("tracing_enabled"):
+        report.fail("trace export", "Tracing was not enabled in the agent process")
+    elif export_error:
+        report.fail("trace export", export_error)
+    else:
+        report.pass_("trace export", "The canonical OTLP trace batch was submitted")
 
 
 def check_tracing(
@@ -574,56 +551,115 @@ def check_tracing(
     *,
     skip_collector_connect: bool,
 ) -> None:
-    if environment.get("OTEL_SDK_DISABLED", "false").lower() == "true":
-        report.fail("OpenInference export", "OTEL_SDK_DISABLED is true")
-        return
-    endpoint = (
-        environment.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
-        or environment.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-        or ""
-    ).strip()
-    if not endpoint:
-        try:
-            with socket.create_connection(("127.0.0.1", 6006), timeout=1):
-                pass
-            endpoint = "http://127.0.0.1:6006"
-            environment["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
-            environment.setdefault(
-                "OTEL_EXPORTER_OTLP_HEADERS",
-                f"x-project-name=docshound-{scenario_name}-demo",
+    sdk_disabled = (
+        environment.get("OTEL_SDK_DISABLED", "false").lower() == "true"
+    )
+    if sdk_disabled:
+        report.fail(
+            "OpenInference export",
+            "OTEL_SDK_DISABLED is true; remove it or set it to false.",
+        )
+    if (
+        environment.get("LANGSMITH_API_KEY")
+        or environment.get("LANGCHAIN_API_KEY")
+    ) and not (
+        environment.get("LANGSMITH_PROJECT")
+        or environment.get("LANGCHAIN_PROJECT")
+    ):
+        environment.setdefault(
+            "LANGSMITH_PROJECT", f"docshound-{scenario_name}-demo"
+        )
+    config = resolve_trace_export_config(environment)
+    if config is None and not sdk_disabled:
+        report.fail(
+            "OpenInference export",
+            "Set LANGSMITH_API_KEY, or configure an explicit OTLP endpoint.",
+        )
+    elif config is not None:
+        if config.destination == "langsmith":
+            project = (
+                environment.get("LANGSMITH_PROJECT")
+                or environment.get("LANGCHAIN_PROJECT")
+                or f"docshound-{scenario_name}-demo"
             )
             report.pass_(
                 "OpenInference export",
-                "Auto-detected the demo Phoenix collector at 127.0.0.1:6006",
+                f"LangSmith project {project} via OTLP",
             )
-        except OSError:
-            report.fail(
-                "OpenInference export",
-                "No collector configured. Run: ./demo/phoenix.sh start",
-            )
-    elif skip_collector_connect:
-        report.warn("collector connection", f"Configured at {endpoint}; connection skipped")
-    else:
-        parsed = urllib.parse.urlparse(endpoint)
-        if not parsed.hostname:
-            report.fail("collector connection", f"Invalid OTLP endpoint: {endpoint}")
         else:
-            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            report.pass_(
+                "OpenInference export",
+                f"Explicit OTLP destination at {config.endpoint}",
+            )
+
+        if skip_collector_connect:
+            report.warn(
+                "trace connection",
+                f"Configured at {config.endpoint}; connection skipped",
+            )
+        else:
+            parsed = urllib.parse.urlparse(config.endpoint)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                report.fail(
+                    "trace connection",
+                    f"Invalid OTLP endpoint: {config.endpoint}",
+                )
+            else:
+                port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                try:
+                    with socket.create_connection((parsed.hostname, port), timeout=3):
+                        pass
+                    report.pass_(
+                        "trace connection",
+                        f"{parsed.hostname}:{port} is reachable",
+                    )
+                except OSError as exc:
+                    report.fail(
+                        "trace connection",
+                        f"Cannot reach {parsed.hostname}:{port}: {exc}",
+                    )
+
+        if config.destination == "langsmith" and not skip_collector_connect:
+            api_endpoint = (
+                environment.get("LANGSMITH_ENDPOINT")
+                or environment.get("LANGCHAIN_ENDPOINT")
+                or DEFAULT_LANGSMITH_ENDPOINT
+            ).rstrip("/")
+            auth_headers = {
+                "Accept": "application/json",
+                "x-api-key": config.headers["x-api-key"],
+            }
+            workspace_id = environment.get("LANGSMITH_WORKSPACE_ID", "").strip()
+            if workspace_id:
+                auth_headers["x-tenant-id"] = workspace_id
             try:
-                with socket.create_connection((parsed.hostname, port), timeout=3):
-                    pass
-                report.pass_("collector connection", f"{parsed.hostname}:{port} is reachable")
-            except OSError as exc:
-                report.fail("collector connection", f"Cannot reach {parsed.hostname}:{port}: {exc}")
+                _request_json(
+                    f"{api_endpoint}/sessions?limit=1",
+                    headers=auth_headers,
+                )
+                report.pass_("LangSmith credential", "Accepted (value redacted)")
+            except RuntimeError as exc:
+                report.fail("LangSmith credential", str(exc))
 
     test_environment = dict(os.environ)
     test_environment["PYTHONPATH"] = str(ROOT / "backend")
+    # Prevent test imports from exporting to a developer's configured backend
+    # while leaving the OpenTelemetry SDK active for the in-memory span tests.
+    for variable in (
+        "LANGSMITH_API_KEY",
+        "LANGCHAIN_API_KEY",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    ):
+        test_environment[variable] = ""
+    test_environment.pop("OTEL_SDK_DISABLED", None)
     completed = subprocess.run(
         [
             sys.executable,
             "-m",
             "unittest",
             "backend.tests.test_tracing",
+            "backend.tests.test_tracing_config",
             "backend.tests.test_cluster_tracing",
             "-q",
         ],
@@ -652,7 +688,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-collector-connect",
         action="store_true",
-        help="Check that the OTLP endpoint exists without opening a socket.",
+        help="Check that tracing is configured without making a network request.",
     )
     parser.add_argument(
         "--require-free-app-ports",

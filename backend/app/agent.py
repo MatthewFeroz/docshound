@@ -19,17 +19,23 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
     )
 
     try:
-        with traced_run(state.run_id, request.repo) as run_span:
+        documentation_source = (
+            request.documentation_source.model_dump(mode="json")
+            if request.documentation_source
+            else None
+        )
+        with traced_run(
+            state.run_id,
+            request.repo,
+            documentation_source=documentation_source,
+            docs_url=request.docs_url,
+        ) as run_span:
             result = await graph.ainvoke(
                 {
                     "run_id": state.run_id,
                     "repo": request.repo,
                     "docs_url": request.docs_url,
-                    "documentation_source": (
-                        request.documentation_source.model_dump(mode="json")
-                        if request.documentation_source
-                        else None
-                    ),
+                    "documentation_source": documentation_source,
                     "include_documentation_activity": (
                         request.include_documentation_activity
                     ),

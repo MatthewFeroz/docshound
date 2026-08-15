@@ -7,10 +7,15 @@ from pydantic import BaseModel, Field
 from app import events
 from app.llm import complete_json, llm_is_configured
 from app.state import DocumentationSource, DocSource, GapCluster, Issue, PullRequest
-from app.tools.cluster import cluster_issues, draft_review_documents
+from app.tools.cluster import (
+    cluster_issues,
+    draft_review_documents,
+    summarize_analysis_inputs,
+    summarize_cluster_outputs,
+)
 from app.tools.docs import search_official_docs
 from app.tools.github import research_pull_requests, research_repo
-from app.tracing import run_traced, setup_tracing
+from app.tracing import run_traced, setup_tracing, summarize_documentation_route
 
 setup_tracing()
 
@@ -308,6 +313,10 @@ async def analyze(state: DocsHoundGraphState) -> DocsHoundGraphState:
             issues,
             pull_requests,
             state["repo"],
+            trace_input=summarize_analysis_inputs(
+                {"issues": issues, "pull_requests": pull_requests}
+            ),
+            trace_output=summarize_cluster_outputs,
         )
         cluster_dicts = [cluster.model_dump(mode="json") for cluster in clusters]
         state["clusters"] = cluster_dicts
@@ -324,6 +333,21 @@ async def search_docs(state: DocsHoundGraphState) -> DocsHoundGraphState:
             GapCluster.model_validate(cluster)
             for cluster in state.get("clusters", [])
         ]
+        documentation_source = (
+            DocumentationSource.model_validate(state["documentation_source"])
+            if state.get("documentation_source")
+            else None
+        )
+        trace_input = summarize_documentation_route(
+            state["repo"],
+            (
+                documentation_source.model_dump(mode="json")
+                if documentation_source
+                else None
+            ),
+            state.get("docs_url"),
+        )
+        trace_input["findings_count"] = len(clusters)
         clusters, sources, inspected_count = await run_traced(
             "search_official_docs",
             state["run_id"],
@@ -332,17 +356,12 @@ async def search_docs(state: DocsHoundGraphState) -> DocsHoundGraphState:
             state["repo"],
             state.get("docs_url"),
             clusters,
-            documentation_source=(
-                DocumentationSource.model_validate(
-                    state["documentation_source"]
-                )
-                if state.get("documentation_source")
-                else None
-            ),
+            documentation_source=documentation_source,
             activity_pull_requests=[
                 PullRequest.model_validate(pull_request)
                 for pull_request in state.get("pull_requests", [])
             ],
+            trace_input=trace_input,
         )
         source_dicts = [source.model_dump(mode="json") for source in sources]
         state["clusters"] = [
@@ -385,6 +404,14 @@ async def draft(state: DocsHoundGraphState) -> DocsHoundGraphState:
             clusters,
             issues,
             pull_requests,
+            trace_input=summarize_analysis_inputs(
+                {
+                    "clusters": clusters,
+                    "issues": issues,
+                    "pull_requests": pull_requests,
+                }
+            ),
+            trace_output=summarize_cluster_outputs,
         )
         cluster_dicts = [cluster.model_dump(mode="json") for cluster in clusters]
         state["clusters"] = cluster_dicts

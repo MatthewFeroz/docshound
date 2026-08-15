@@ -4,7 +4,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
-from langsmith.run_helpers import get_current_run_tree
 from openai import AsyncOpenAI
 from opentelemetry import trace
 
@@ -142,7 +141,6 @@ async def complete_json(
                 served_model=served_model,
                 provider=provider,
                 fallback_used=index > 0,
-                response=response,
             )
             return JSONCompletion(
                 value=value,
@@ -172,23 +170,7 @@ def _record_completion_metadata(
     served_model: str,
     provider: str,
     fallback_used: bool,
-    response: Any,
 ) -> None:
-    current_run = get_current_run_tree()
-    usage = getattr(response, "usage", None)
-    metadata = {
-        "llm_gateway": route.gateway,
-        "llm_provider": provider,
-        "llm_requested_model": requested_model,
-        "llm_served_model": served_model,
-        "llm_fallback_used": fallback_used,
-        "input_tokens": getattr(usage, "prompt_tokens", None),
-        "output_tokens": getattr(usage, "completion_tokens", None),
-        "total_tokens": getattr(usage, "total_tokens", None),
-    }
-    if current_run is not None:
-        current_run.add_metadata(metadata)
-
     span = trace.get_current_span()
     if span.is_recording():
         span.set_attribute("docshound.llm.gateway", route.gateway)

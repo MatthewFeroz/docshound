@@ -16,6 +16,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 from opentelemetry.trace import StatusCode
 
 from app import tracing
+from app.tracing_config import resolve_trace_export_config
 
 
 class TracingTests(unittest.TestCase):
@@ -62,8 +63,15 @@ class TracingTests(unittest.TestCase):
         )
         self.assertEqual(tool.attributes[SpanAttributes.SESSION_ID], "run-123")
         self.assertEqual(tool.attributes[SpanAttributes.TOOL_NAME], "research_repo")
+        self.assertEqual(agent.attributes["langsmith.span.kind"], "chain")
+        self.assertEqual(tool.attributes["langsmith.span.kind"], "tool")
+        self.assertNotIn("langsmith.trace.session_id", agent.attributes)
         self.assertEqual(tool.context.trace_id, agent.context.trace_id)
         self.assertEqual(tool.parent.span_id, agent.context.span_id)
+        self.assertEqual(
+            json.loads(agent.attributes[SpanAttributes.INPUT_VALUE]),
+            {"product_repo": "acme/docs", "run_id": "run-123"},
+        )
         self.assertEqual(
             json.loads(tool.attributes[SpanAttributes.OUTPUT_VALUE]),
             {"type": "list", "count": 2},
@@ -102,6 +110,72 @@ class TracingTests(unittest.TestCase):
             str(span.attributes) for span in self.exporter.get_finished_spans()
         )
         self.assertNotIn(sensitive_body, serialized)
+
+    def test_root_span_records_sanitized_documentation_route(self) -> None:
+        with tracing.traced_run(
+            "run-route",
+            "acme/product",
+            documentation_source={
+                "kind": "github",
+                "repo": "acme/documentation",
+                "root": "/docs/reference/",
+                "url": "https://docs.example.com/reference?token=secret#private",
+            },
+        ):
+            pass
+
+        span = self.exporter.get_finished_spans()[0]
+        inputs = json.loads(span.attributes[SpanAttributes.INPUT_VALUE])
+        self.assertEqual(
+            inputs,
+            {
+                "documentation_repo": "acme/documentation",
+                "documentation_root": "docs/reference",
+                "documentation_source_kind": "github",
+                "documentation_url": "https://docs.example.com/reference",
+                "product_repo": "acme/product",
+                "run_id": "run-route",
+            },
+        )
+        self.assertEqual(
+            span.attributes["docshound.documentation.repo"],
+            "acme/documentation",
+        )
+        self.assertNotIn("secret", str(span.attributes))
+        self.assertNotIn("private", str(span.attributes))
+
+    def test_explicit_sanitized_tool_summaries_are_exported(self) -> None:
+        async def operation() -> list[str]:
+            return ["one", "two"]
+
+        with (
+            patch("app.tracing.events.publish"),
+            tracing.traced_run("run-summary", "acme/docs"),
+        ):
+            asyncio.run(
+                tracing.run_traced(
+                    "analyze",
+                    "run-summary",
+                    "acme/docs",
+                    operation,
+                    trace_input={"issue_refs": ["acme/docs#12"]},
+                    trace_output=lambda result: {"finding_count": len(result)},
+                )
+            )
+
+        tool = next(
+            span
+            for span in self.exporter.get_finished_spans()
+            if span.name == "tool.analyze"
+        )
+        self.assertEqual(
+            json.loads(tool.attributes[SpanAttributes.INPUT_VALUE]),
+            {"issue_refs": ["acme/docs#12"]},
+        )
+        self.assertEqual(
+            json.loads(tool.attributes[SpanAttributes.OUTPUT_VALUE]),
+            {"finding_count": 2},
+        )
 
     def test_tool_errors_set_otel_error_status(self) -> None:
         with (
@@ -146,6 +220,27 @@ class TracingTests(unittest.TestCase):
                 self.assertFalse(tracing.setup_tracing())
         finally:
             tracing._tracing_initialized = original_initialized
+
+    def test_langsmith_exporter_receives_resolved_endpoint_and_headers(self) -> None:
+        config = resolve_trace_export_config(
+            {
+                "LANGSMITH_API_KEY": "test-key",
+                "LANGSMITH_PROJECT": "docshound-tests",
+            }
+        )
+        self.assertIsNotNone(config)
+        assert config is not None
+
+        with patch("app.tracing.OTLPSpanExporter") as exporter_type:
+            tracing._build_span_exporter(config)
+
+        exporter_type.assert_called_once_with(
+            endpoint="https://api.smith.langchain.com/otel/v1/traces",
+            headers={
+                "x-api-key": "test-key",
+                "Langsmith-Project": "docshound-tests",
+            },
+        )
 
     def test_instrumentation_dependencies_are_compatible(self) -> None:
         for instrumentor in (LangChainInstrumentor(), OpenAIInstrumentor()):
