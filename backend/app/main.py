@@ -38,6 +38,7 @@ from app.documentation_prs import (
     write_enabled,
 )
 from app.llm import get_llm_route
+from app.run_outcomes import apply_run_outcome
 from app.run_store import load_run, load_runs, save_run
 from app.runtime_credentials import (
     get_github_api_token,
@@ -124,9 +125,12 @@ def _normalize_repo(value: str) -> str:
 
 
 def _run_response(state: AgentState) -> RunResponse:
+    apply_run_outcome(state)
     return RunResponse(
         run_id=state.run_id,
         status=state.status,
+        outcome=state.outcome,
+        summary=state.summary,
         repo=state.repo,
         dry_run=state.dry_run,
         documentation_source=state.documentation_source,
@@ -439,6 +443,7 @@ async def get_finding(run_id: str, index: int) -> FindingResponse:
 @app.get("/api/v1/runs/{run_id}/events")
 async def stream_events(run_id: str) -> EventSourceResponse:
     state = _require_run(run_id)
+    apply_run_outcome(state)
 
     async def event_generator():
         if state.status != "running":
@@ -448,6 +453,10 @@ async def stream_events(run_id: str) -> EventSourceResponse:
                         "type": "run_completed",
                         "run_id": state.run_id,
                         "status": state.status,
+                        "outcome": state.outcome,
+                        "summary": state.summary,
+                        "warnings": state.warnings,
+                        "errors": state.errors,
                     }
                 )
             }
@@ -463,6 +472,7 @@ async def stream_events(run_id: str) -> EventSourceResponse:
 async def stream_events_json_legacy(run_id: str) -> EventSourceResponse:
     """Preserve the named JSON event stream exposed by DocsHound 0.x."""
     state = _require_run(run_id)
+    apply_run_outcome(state)
 
     async def event_generator():
         if state.status != "running":
@@ -470,6 +480,10 @@ async def stream_events_json_legacy(run_id: str) -> EventSourceResponse:
                 "type": "run_completed",
                 "run_id": state.run_id,
                 "status": state.status,
+                "outcome": state.outcome,
+                "summary": state.summary,
+                "warnings": state.warnings,
+                "errors": state.errors,
             }
             yield {"event": event["type"], "data": json.dumps(event)}
             return

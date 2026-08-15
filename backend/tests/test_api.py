@@ -249,12 +249,18 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(fetched.status_code, 200)
         self.assertEqual(fetched.json()["run_id"], run_id)
         self.assertEqual(fetched.json()["repo"], "acme/product")
+        self.assertEqual(fetched.json()["outcome"], "in_progress")
 
         RUNS[run_id].status = "completed"
         events = self.client.get(f"/runs/{run_id}/events.json")
         self.assertEqual(events.status_code, 200)
         self.assertIn("event: run_completed", events.text)
         self.assertIn('"status": "completed"', events.text)
+        self.assertIn('"outcome": "no_activity"', events.text)
+        self.assertIn(
+            "No relevant issues or merged pull requests were found.",
+            events.text,
+        )
 
     def test_source_resolution_contract_exposes_repo_root_and_activity(self) -> None:
         source = DocumentationSource(

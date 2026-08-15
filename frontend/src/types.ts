@@ -134,9 +134,19 @@ export interface Finding {
   documentation_change: DocumentationChange | null;
 }
 
+export type RunOutcome =
+  | "in_progress"
+  | "recommendations_found"
+  | "no_activity"
+  | "no_recommendations"
+  | "partial_failure"
+  | "failed";
+
 export interface Run {
   run_id: string;
   status: "running" | "completed" | "completed_with_errors" | "failed";
+  outcome: RunOutcome;
+  summary: string;
   repo: string;
   dry_run: boolean;
   documentation_source: DocumentationSource | null;
@@ -188,6 +198,10 @@ export interface RunEvent {
   type: string;
   run_id?: string;
   status?: string;
+  outcome?: RunOutcome;
+  summary?: string;
+  warnings?: string[];
+  errors?: string[];
   name?: string;
   action?: string;
   reason?: string;

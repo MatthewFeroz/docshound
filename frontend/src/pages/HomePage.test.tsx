@@ -39,6 +39,8 @@ vi.mock("../api", () => ({
 const runningRun: Run = {
   run_id: "run-12345678",
   status: "running",
+  outcome: "in_progress",
+  summary: "Run is in progress.",
   repo: "acme/product",
   dry_run: false,
   documentation_source: {
@@ -98,6 +100,18 @@ async function connectGitHub(container: HTMLElement) {
     ),
   );
   await screen.findByText(/token connected/i);
+}
+
+async function startConnectedRun(container: HTMLElement) {
+  fireEvent.change(screen.getByPlaceholderText(/paste your repo/i), {
+    target: { value: "acme/product" },
+  });
+  await connectGitHub(container);
+  const runButton = screen.getByRole("button", { name: /run agent/i });
+  await waitFor(() => expect(runButton).toBeEnabled());
+  fireEvent.click(runButton);
+  await waitFor(() => expect(mocks.createRun).toHaveBeenCalled());
+  await waitFor(() => expect(mocks.eventHandler).toBeDefined());
 }
 
 describe("HomePage live analysis", () => {
@@ -373,6 +387,111 @@ describe("HomePage live analysis", () => {
         block: "nearest",
       }),
     );
+  });
+
+  it("shows terminal agent errors instead of leaving analysis in progress", async () => {
+    const completedWithErrors: Run = {
+      ...runningRun,
+      status: "completed_with_errors",
+      outcome: "partial_failure",
+      summary:
+        "The run completed with errors, so its recommendations may be incomplete.",
+      errors: ["Official documentation search could not be completed."],
+    };
+    const { container } = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await startConnectedRun(container);
+    act(() => {
+      mocks.eventHandler?.({
+        type: "run_completed",
+        status: "completed_with_errors",
+        outcome: completedWithErrors.outcome,
+        summary: completedWithErrors.summary,
+        errors: completedWithErrors.errors,
+      });
+    });
+
+    expect(
+      await screen.findByText(
+        "Official documentation search could not be completed.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Run completed with errors",
+    );
+    expect(
+      screen.queryByText(/analysis is in progress/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("explains when no repository activity was found", async () => {
+    const noActivity: Run = {
+      ...runningRun,
+      status: "completed",
+      outcome: "no_activity",
+      summary: "No relevant issues or merged pull requests were found.",
+    };
+    const { container } = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await startConnectedRun(container);
+    mocks.getRun.mockResolvedValue(noActivity);
+    act(() => {
+      mocks.eventHandler?.({
+        type: "run_completed",
+        status: "completed",
+        outcome: noActivity.outcome,
+        summary: noActivity.summary,
+      });
+    });
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "No relevant issues or merged pull requests were found.",
+    );
+    expect(
+      screen.queryByText(/analysis is in progress/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("explains when activity produced no documentation recommendations", async () => {
+    const noRecommendations: Run = {
+      ...runningRun,
+      status: "completed",
+      outcome: "no_recommendations",
+      summary:
+        "Repository activity was found, but it did not produce a documentation recommendation.",
+      issues_scraped: 4,
+    };
+    const { container } = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await startConnectedRun(container);
+    mocks.getRun.mockResolvedValue(noRecommendations);
+    act(() => {
+      mocks.eventHandler?.({
+        type: "run_completed",
+        status: "completed",
+        outcome: noRecommendations.outcome,
+        summary: noRecommendations.summary,
+      });
+    });
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Repository activity was found, but it did not produce a documentation recommendation.",
+    );
+    expect(
+      screen.queryByText(/analysis is in progress/i),
+    ).not.toBeInTheDocument();
   });
 
   it("shows a separate official docs repo and includes its activity", async () => {
