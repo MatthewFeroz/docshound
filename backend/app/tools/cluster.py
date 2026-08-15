@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from langsmith import traceable
 
+from app.demo_scenarios import pinned_issue_relationships
 from app.llm import complete_json, llm_is_configured, require_json_array
 from app.state import GapCluster, Issue, PullRequest
 
@@ -31,8 +32,12 @@ def _trace_analysis_inputs(inputs: dict) -> dict:
     return {
         "issue_count": len(issues),
         "issue_numbers": [issue.number for issue in issues],
+        "issue_refs": [_source_ref(issue) for issue in issues],
         "pull_request_count": len(pull_requests),
         "pull_request_numbers": [pull_request.number for pull_request in pull_requests],
+        "pull_request_refs": [
+            _source_ref(pull_request) for pull_request in pull_requests
+        ],
         "input_cluster_count": len(clusters),
         "input_clusters": [
             {
@@ -84,15 +89,25 @@ async def cluster_issues(
                 validated = _validate_cluster_sources(
                     clusters, issues, pull_requests, product_repo=product_repo
                 )
-                return _ensure_shipped_change(
+                findings = _ensure_shipped_change(
                     validated, pull_requests, product_repo=product_repo
+                )
+                return _ensure_demo_source_coverage(
+                    findings,
+                    issues,
+                    pull_requests,
+                    product_repo=product_repo,
                 )
         except Exception:
             logger.exception("LLM clustering failed; using heuristic fallback")
-    return _ensure_shipped_change(
-        _cluster_heuristically(
-            issues, pull_requests, product_repo=product_repo
-        ),
+    findings = _ensure_shipped_change(
+        _cluster_heuristically(issues, pull_requests, product_repo=product_repo),
+        pull_requests,
+        product_repo=product_repo,
+    )
+    return _ensure_demo_source_coverage(
+        findings,
+        issues,
         pull_requests,
         product_repo=product_repo,
     )
@@ -183,6 +198,10 @@ async def _cluster_with_llm(
                     "Prefer product changes that would help a user operate, "
                     "configure, migrate, or understand the project. Include two to four "
                     "shipped_change findings when suitable merged PRs are supplied. "
+                    "Represent every supplied issue that describes a documentation gap "
+                    "in at least one finding. A documentation request may belong with "
+                    "an earlier merged implementation PR even when that PR does not "
+                    "explicitly close the later issue. "
                     "For open_gap findings, if the issues do not contain a confirmed solution, say what still "
                     "needs verification instead of inventing steps. Do not add "
                     "vendor-specific setup, commands, environment variables, links, "
@@ -510,6 +529,78 @@ def _ensure_shipped_change(
         draft_summary=_pull_request_summary(primary),
     )
     return ([shipped] + clusters)[:8]
+
+
+def _ensure_demo_source_coverage(
+    clusters: list[GapCluster],
+    issues: list[Issue],
+    pull_requests: list[PullRequest],
+    *,
+    product_repo: str | None,
+) -> list[GapCluster]:
+    """Prevent a model from silently dropping a researched, pinned demo source."""
+    if not product_repo:
+        return clusters[:8]
+    relationships = pinned_issue_relationships(product_repo)
+    if not relationships:
+        return clusters[:8]
+
+    issue_by_number = {issue.number: issue for issue in issues}
+    pull_request_numbers = {pull_request.number for pull_request in pull_requests}
+    covered_issue_refs = {
+        reference
+        for cluster in clusters
+        for reference in cluster.issue_refs
+    }
+    findings = list(clusters)
+    for number, related_pull_requests in relationships.items():
+        issue = issue_by_number.get(number)
+        if not issue or _source_ref(issue) in covered_issue_refs:
+            continue
+
+        related_numbers = set(related_pull_requests) & pull_request_numbers
+        related_finding = next(
+            (
+                cluster
+                for cluster in findings
+                if related_numbers & set(cluster.pr_numbers)
+            ),
+            None,
+        )
+        if related_finding:
+            related_finding.issue_numbers = list(
+                dict.fromkeys([*related_finding.issue_numbers, issue.number])
+            )
+            related_finding.issue_refs = list(
+                dict.fromkeys([*related_finding.issue_refs, _source_ref(issue)])
+            )
+        elif len(findings) < 8:
+            findings.append(
+                GapCluster(
+                    name=issue.title,
+                    summary=_issue_summary(issue),
+                    recurring_question=(
+                        "What documentation is missing for this reported behavior?"
+                    ),
+                    issue_numbers=[issue.number],
+                    issue_refs=[_source_ref(issue)],
+                    finding_type="open_gap",
+                    severity="medium",
+                    confidence=0.9,
+                    draft_title=issue.title,
+                )
+            )
+        covered_issue_refs.add(_source_ref(issue))
+    return findings[:8]
+
+
+def _issue_summary(issue: Issue) -> str:
+    for line in (issue.body or "").splitlines():
+        candidate = re.sub(r"^[-*]\s+", "", line.strip())
+        candidate = re.sub(r"[`*_]", "", candidate)
+        if candidate and not candidate.startswith("#"):
+            return candidate[:280]
+    return f"Issue #{issue.number} identifies a documentation gap."
 
 
 def _documentation_value_score(pull_request: PullRequest) -> int:

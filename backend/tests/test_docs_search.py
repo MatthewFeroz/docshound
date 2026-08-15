@@ -299,6 +299,48 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(requested_paths), 30)
         self.assertNotIn("packages/internal/README.md", requested_paths)
 
+    async def test_active_demo_updates_its_researched_existing_target(self) -> None:
+        target_path = "packages/web/src/content/docs/cli.mdx"
+        pages = {
+            target_path: "# CLI\n\nThe command-line reference.",
+            "packages/web/src/content/docs/mcp-servers.mdx": (
+                "# MCP servers\n\nConfigure local and remote MCP servers."
+            ),
+        }
+        cluster = GapCluster(
+            name="Non-interactive MCP registration",
+            summary="The CLI can register a remote MCP server non-interactively.",
+            recurring_question="How do I use opencode mcp add with flags?",
+            issue_numbers=[42484],
+            severity="medium",
+            confidence=0.9,
+        )
+        source = DocumentationSource(
+            repo="acme/opencode",
+            root="packages/web/src/content/docs",
+            confidence=0.99,
+            discovered_by="user_override",
+            page_count=2,
+        )
+
+        with patch(
+            "app.tools.docs.documentation_target_path",
+            return_value=target_path,
+        ):
+            clusters, _paths, sources, _count = await self._search_pages(
+                pages,
+                cluster,
+                authenticated=True,
+                documentation_source=source,
+            )
+
+        coverage = clusters[0].documentation_coverage
+        self.assertEqual(coverage.status, "partial")
+        self.assertEqual(coverage.recommended_action, "update_page")
+        self.assertEqual(coverage.recommended_path, target_path)
+        self.assertEqual(coverage.relevant_sources[0].repository_path, target_path)
+        self.assertIn(target_path, sources)
+
     async def test_documented_finding_is_kept_without_creating_a_draft(self) -> None:
         cluster = GapCluster(
             name="Authentication setup",

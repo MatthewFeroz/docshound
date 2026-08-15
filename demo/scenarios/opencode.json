@@ -1,0 +1,60 @@
+{
+  "title": "OpenCode CLI documentation catch-up",
+  "source_repository": "anomalyco/opencode",
+  "publish_repository": "MatthewFeroz/opencode",
+  "source_ref": "dev",
+  "publish_base": "dev",
+  "researched_source_commit": "4643e65ad6334de3e4e68dedc201d5fbb828c9fe",
+  "include_recent_activity": false,
+  "issues": [
+    {
+      "number": 42484,
+      "required_state": "open",
+      "related_pull_requests": [31054],
+      "title": "[FEATURE]: The documentation needs to include instructions for usage like `opencode mcp add github --url https://api.githubcopilot.com/mcp --header \"Authorization=Bearer {env:GITHUB_TOKEN}\"`",
+      "rationale": "The shipped non-interactive MCP registration syntax is absent from the CLI reference."
+    },
+    {
+      "number": 41537,
+      "required_state": "open",
+      "related_pull_requests": [],
+      "title": "docs: --mini, --no-replay, --replay-limit missing from CLI reference",
+      "rationale": "The public TUI and attach flags are implemented but missing from both CLI option tables."
+    }
+  ],
+  "pull_requests": [
+    {
+      "number": 31054,
+      "required_state": "merged",
+      "title": "feat(opencode): support non-interactive MCP add",
+      "rationale": "This merged change is the implementation evidence for the MCP documentation request."
+    }
+  ],
+  "documentation": {
+    "root": "packages/web/src/content/docs",
+    "target_path": "packages/web/src/content/docs/cli.mdx",
+    "expected_missing_snippets": [
+      "opencode mcp add github",
+      "--mini",
+      "--no-replay",
+      "--replay-limit"
+    ]
+  },
+  "implementation_checks": [
+    {
+      "path": "packages/opencode/src/cli/cmd/mcp.ts",
+      "required_snippets": ["--url", "--env", "--header"]
+    },
+    {
+      "path": "packages/opencode/src/cli/cmd/tui.ts",
+      "required_snippets": ["--mini", "--no-replay", "--replay-limit"]
+    },
+    {
+      "path": "packages/opencode/src/cli/cmd/attach.ts",
+      "required_snippets": ["--mini", "--no-replay", "--replay-limit"]
+    }
+  ],
+  "model": {
+    "primary": "google/gemini-3.7-flash"
+  }
+}

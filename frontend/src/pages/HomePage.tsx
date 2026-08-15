@@ -153,22 +153,22 @@ function repositorySlug(value: string): string | null {
   return `${owner}/${repository}`;
 }
 
-function hasVerifiedGitHubAccess(
+function hasConnectedGitHubAccess(
   selectedRepo: string | null,
   runtimeConfig: RuntimeConfig | null,
-  browserVerifiedRepo: string | null,
+  browserGitHubConnected: boolean,
 ): boolean {
   if (!selectedRepo) return false;
-  const normalizedRepo = selectedRepo.toLowerCase();
-  if (browserVerifiedRepo?.toLowerCase() === normalizedRepo) return true;
+  if (browserGitHubConnected) return true;
 
   // Production deployments can rely on a server-managed token. When browser
-  // credential entry is enabled, require this page to verify an entered token
-  // instead of treating stale runtime state as proof of access.
+  // credential entry is enabled, require this page to connect a token once for
+  // the local backend session instead of treating stale runtime state as proof.
   return Boolean(
     runtimeConfig?.credential_input_enabled === false &&
     runtimeConfig.github_configured &&
-    runtimeConfig.github_verified_repo?.toLowerCase() === normalizedRepo,
+    runtimeConfig.github_verified_repo?.toLowerCase() ===
+      selectedRepo.toLowerCase(),
   );
 }
 
@@ -199,9 +199,7 @@ export function HomePage() {
   const [savingGitHubKey, setSavingGitHubKey] = useState(false);
   const [githubKeyMessage, setGitHubKeyMessage] = useState<string | null>(null);
   const [githubKeyError, setGitHubKeyError] = useState<string | null>(null);
-  const [browserVerifiedGitHubRepo, setBrowserVerifiedGitHubRepo] = useState<
-    string | null
-  >(null);
+  const [browserGitHubConnected, setBrowserGitHubConnected] = useState(false);
   const [sourceResolution, setSourceResolution] =
     useState<SourceResolution | null>(null);
   const [documentationSource, setDocumentationSource] =
@@ -269,10 +267,10 @@ export function HomePage() {
     try {
       const config = await api.setGitHubApiKey(selectedRepo, apiKey);
       setRuntimeConfig(config);
-      setBrowserVerifiedGitHubRepo(selectedRepo);
+      setBrowserGitHubConnected(true);
       setGitHubKey("");
       setGitHubKeyMessage(
-        `Connected to ${selectedRepo}. DocsHound will use this token for research and documentation pull requests.`,
+        `Connected as ${config.github_account || "GitHub user"}. DocsHound will reuse this token for research and documentation pull requests during this local server session.`,
       );
     } catch (credentialError) {
       setGitHubKeyError(
@@ -353,10 +351,10 @@ export function HomePage() {
     event.preventDefault();
     const selectedRepo = repositorySlug(repo);
     if (
-      !hasVerifiedGitHubAccess(
+      !hasConnectedGitHubAccess(
         selectedRepo,
         runtimeConfig,
-        browserVerifiedGitHubRepo,
+        browserGitHubConnected,
       )
     ) {
       setError("Verify GitHub access for this repository before starting.");
@@ -408,10 +406,10 @@ export function HomePage() {
     persistedGaps.length >= liveGaps.length ? persistedGaps : liveGaps;
   const selectedRepo = repositorySlug(repo);
   const repoReady = selectedRepo !== null;
-  const githubReady = hasVerifiedGitHubAccess(
+  const githubReady = hasConnectedGitHubAccess(
     selectedRepo,
     runtimeConfig,
-    browserVerifiedGitHubRepo,
+    browserGitHubConnected,
   );
   const modelReady = Boolean(runtimeConfig?.llm_configured);
   const documentationReady = documentationSource !== null;
@@ -582,9 +580,6 @@ export function HomePage() {
                   value={repo}
                   onChange={(event) => {
                     setRepo(event.target.value);
-                    setBrowserVerifiedGitHubRepo(null);
-                    setGitHubKey("");
-                    setGitHubKeyMessage(null);
                     setGitHubKeyError(null);
                   }}
                   placeholder="Paste your repo — owner/repository or URL"
@@ -643,7 +638,7 @@ export function HomePage() {
                           {!repoReady
                             ? "Paste a repository before connecting"
                             : githubReady
-                              ? `${runtimeConfig?.github_account || "GitHub"} · repository access connected`
+                              ? `${runtimeConfig?.github_account || "GitHub"} · token connected`
                               : "Connect one GitHub token"}
                         </small>
                       </span>

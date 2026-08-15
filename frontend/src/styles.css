@@ -642,7 +642,8 @@ main {
 .github-connect-actions {
   display: grid;
   grid-template-columns: 1fr 1.4fr;
-  gap: 9px;
+  gap: 12px;
+  margin-top: 12px;
 }
 .github-connect-actions a,
 .github-connect-actions button {

@@ -10,6 +10,7 @@ from urllib.parse import quote, urlparse
 import httpx
 
 from app.config import get_settings
+from app.demo_scenarios import documentation_target_path
 from app.llm import complete_json, llm_is_configured, require_json_array
 from app.runtime_credentials import get_github_api_token
 from app.state import (
@@ -165,13 +166,34 @@ async def search_official_docs(
 
     sources_by_cluster: list[list[DocSource]] = []
     ranked_documents: list[list[RepositoryDocument]] = []
+    documentation_repository = (
+        documentation_source.repo
+        if documentation_source and documentation_source.repo
+        else repo
+    )
+    demo_target_path = documentation_target_path(documentation_repository)
     for cluster in clusters:
         document_limit = (
             AUTHENTICATED_DOCUMENTS_PER_FINDING
             if _configured_github_token()
             else PUBLIC_DOCUMENTS_PER_FINDING
         )
-        ranked = _rank_documents(cluster, documents)[:document_limit]
+        ranked = _rank_documents(cluster, documents)
+        if demo_target_path:
+            target_document = next(
+                (
+                    document
+                    for document in documents
+                    if document.path == demo_target_path
+                ),
+                None,
+            )
+            if target_document:
+                ranked = [
+                    target_document,
+                    *(document for document in ranked if document.path != demo_target_path),
+                ]
+        ranked = ranked[:document_limit]
         ranked_documents.append(ranked)
         sources_by_cluster.append(
             [_document_source(document, cluster) for document in ranked]
@@ -263,6 +285,32 @@ async def search_official_docs(
                     ranked_documents[index],
                     relevant_sources,
                     repository_search_succeeded=True,
+                )
+        if demo_target_path:
+            target_source = next(
+                (
+                    source
+                    for source in sources_by_cluster[index]
+                    if source.repository_path == demo_target_path
+                ),
+                None,
+            )
+            if target_source:
+                existing_sources = [
+                    source
+                    for source in assessment.relevant_sources
+                    if source.repository_path != demo_target_path
+                ]
+                assessment = DocumentationCoverage(
+                    status="partial",
+                    rationale=(
+                        "The active demo's researched target is this existing CLI "
+                        "reference, and preflight verifies that the pinned behavior "
+                        "is still absent. Update this page with the reviewed addition."
+                    ),
+                    recommended_action="update_page",
+                    recommended_path=demo_target_path,
+                    relevant_sources=[target_source, *existing_sources],
                 )
         cluster.documentation_coverage = assessment
 

@@ -73,6 +73,16 @@ You can also run each application independently:
 bun run --cwd frontend dev
 ```
 
+## OpenCode stage demo
+
+The repeatable stage setup, pinned live GitHub sources, read-only preflight, and
+local OpenInference trace viewer live in [`demo/`](demo/README.md). Start the
+complete demo environment with:
+
+```bash
+./demo/run.sh opencode
+```
+
 ## Backend configuration
 
 Add credentials to `backend/.env` (or a root `.env` for compatibility with
