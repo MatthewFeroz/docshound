@@ -10,6 +10,12 @@ import { Link } from "react-router-dom";
 import { api, subscribeToRun } from "../api";
 import { BrandHeader } from "../components/BrandHeader";
 import { GapCard } from "../components/GapCard";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "../components/ui/accordion";
 import type {
   DocumentationSource,
   GapCluster,
@@ -32,6 +38,8 @@ interface LiveGap {
   cluster: GapCluster;
   index: number;
 }
+
+type ReadinessSection = "github" | "documentation" | "model";
 
 function presentEvent(event: RunEvent, sequence: number): TimelineItem {
   const base = { id: `${event.type}-${sequence}`, icon: "●", kind: "system" };
@@ -144,6 +152,25 @@ function repositorySlug(value: string): string | null {
   return `${owner}/${repository}`;
 }
 
+function hasVerifiedGitHubAccess(
+  selectedRepo: string | null,
+  runtimeConfig: RuntimeConfig | null,
+  browserVerifiedRepo: string | null,
+): boolean {
+  if (!selectedRepo) return false;
+  const normalizedRepo = selectedRepo.toLowerCase();
+  if (browserVerifiedRepo?.toLowerCase() === normalizedRepo) return true;
+
+  // Production deployments can rely on a server-managed token. When browser
+  // credential entry is enabled, require this page to verify an entered token
+  // instead of treating stale runtime state as proof of access.
+  return Boolean(
+    runtimeConfig?.credential_input_enabled === false &&
+    runtimeConfig.github_configured &&
+    runtimeConfig.github_verified_repo?.toLowerCase() === normalizedRepo,
+  );
+}
+
 function documentationSourceLabel(source: DocumentationSource): string {
   if (source.kind === "website") return source.url || "Documentation website";
   return [source.repo, source.root].filter(Boolean).join(" / ");
@@ -170,6 +197,9 @@ export function HomePage() {
   const [savingGitHubKey, setSavingGitHubKey] = useState(false);
   const [githubKeyMessage, setGitHubKeyMessage] = useState<string | null>(null);
   const [githubKeyError, setGitHubKeyError] = useState<string | null>(null);
+  const [browserVerifiedGitHubRepo, setBrowserVerifiedGitHubRepo] = useState<
+    string | null
+  >(null);
   const [sourceResolution, setSourceResolution] =
     useState<SourceResolution | null>(null);
   const [documentationSource, setDocumentationSource] =
@@ -181,6 +211,8 @@ export function HomePage() {
   const [overrideRoot, setOverrideRoot] = useState("");
   const [includeDocumentationActivity, setIncludeDocumentationActivity] =
     useState(true);
+  const [openReadinessSection, setOpenReadinessSection] =
+    useState<ReadinessSection | null>(null);
 
   useEffect(() => {
     void api
@@ -224,7 +256,7 @@ export function HomePage() {
       return;
     }
     const apiKey = githubKey.trim();
-    if (!apiKey && !runtimeConfig?.github_configured) {
+    if (!apiKey) {
       setGitHubKeyError("Enter a fine-grained GitHub access token.");
       return;
     }
@@ -233,15 +265,11 @@ export function HomePage() {
     setGitHubKeyMessage(null);
     setGitHubKeyError(null);
     try {
-      const config = await api.setGitHubApiKey(
-        selectedRepo,
-        apiKey || undefined,
-      );
+      const config = await api.setGitHubApiKey(selectedRepo, apiKey);
       setRuntimeConfig(config);
+      setBrowserVerifiedGitHubRepo(selectedRepo);
       setGitHubKey("");
-      setGitHubKeyMessage(
-        `Verified read access to ${config.github_verified_repo}.`,
-      );
+      setGitHubKeyMessage(`Verified read access to ${selectedRepo}.`);
     } catch (credentialError) {
       setGitHubKeyError(
         credentialError instanceof Error
@@ -304,8 +332,13 @@ export function HomePage() {
   async function startRun(event: React.FormEvent) {
     event.preventDefault();
     const selectedRepo = repositorySlug(repo);
-    const verifiedRepo = runtimeConfig?.github_verified_repo?.toLowerCase();
-    if (!selectedRepo || verifiedRepo !== selectedRepo.toLowerCase()) {
+    if (
+      !hasVerifiedGitHubAccess(
+        selectedRepo,
+        runtimeConfig,
+        browserVerifiedGitHubRepo,
+      )
+    ) {
       setError("Verify GitHub access for this repository before starting.");
       return;
     }
@@ -355,11 +388,10 @@ export function HomePage() {
     persistedGaps.length >= liveGaps.length ? persistedGaps : liveGaps;
   const selectedRepo = repositorySlug(repo);
   const repoReady = selectedRepo !== null;
-  const githubReady = Boolean(
-    selectedRepo &&
-    runtimeConfig?.github_configured &&
-    runtimeConfig.github_verified_repo?.toLowerCase() ===
-      selectedRepo.toLowerCase(),
+  const githubReady = hasVerifiedGitHubAccess(
+    selectedRepo,
+    runtimeConfig,
+    browserVerifiedGitHubRepo,
   );
   const modelReady = Boolean(runtimeConfig?.llm_configured);
   const documentationReady = documentationSource !== null;
@@ -370,6 +402,23 @@ export function HomePage() {
     modelReady,
   ].filter(Boolean).length;
   const readyToRun = readinessCount === 4;
+
+  useEffect(() => {
+    if (!repoReady) return;
+    if (!githubReady) {
+      setOpenReadinessSection("github");
+      return;
+    }
+    if (!documentationReady) {
+      setOpenReadinessSection("documentation");
+      return;
+    }
+    if (!modelReady) {
+      setOpenReadinessSection("model");
+      return;
+    }
+    setOpenReadinessSection(null);
+  }, [documentationReady, githubReady, modelReady, repoReady]);
 
   useEffect(() => {
     if (!githubReady || !selectedRepo) {
@@ -513,6 +562,8 @@ export function HomePage() {
                   value={repo}
                   onChange={(event) => {
                     setRepo(event.target.value);
+                    setBrowserVerifiedGitHubRepo(null);
+                    setGitHubKey("");
                     setGitHubKeyMessage(null);
                     setGitHubKeyError(null);
                   }}
@@ -548,439 +599,378 @@ export function HomePage() {
                 className="run-readiness"
                 aria-label="Run readiness checklist"
               >
-                <div className="run-readiness-head">
-                  <strong>Ready to run</strong>
-                  <span>{readinessCount} of 4 ready</span>
-                </div>
-                <div className={`readiness-row ${repoReady ? "is-ready" : ""}`}>
-                  <span className="readiness-check" aria-hidden="true">
-                    {repoReady ? "✓" : "1"}
-                  </span>
-                  <span className="readiness-copy">
-                    <strong>Repository</strong>
-                    <small>
-                      {repoReady ? selectedRepo : "Paste a GitHub repository"}
-                    </small>
-                  </span>
-                  <span className="readiness-state">
-                    {repoReady ? "READY" : "REQUIRED"}
-                  </span>
-                </div>
-                <details
-                  className={`readiness-row readiness-connect ${
-                    githubReady ? "is-ready" : ""
-                  }`}
+                <Accordion
+                  value={openReadinessSection ? [openReadinessSection] : []}
+                  onValueChange={(value) =>
+                    setOpenReadinessSection(
+                      (value[0] as ReadinessSection | undefined) ?? null,
+                    )
+                  }
                 >
-                  <summary>
-                    <span className="readiness-check" aria-hidden="true">
-                      {githubReady ? "✓" : "2"}
-                    </span>
-                    <span className="readiness-copy">
-                      <strong>GitHub access</strong>
-                      <small>
-                        {!repoReady
-                          ? "Paste a repository before connecting"
-                          : githubReady
-                            ? `${runtimeConfig?.github_account || "GitHub"} · deep scan enabled`
-                            : runtimeConfig?.github_configured
-                              ? "Verify access to this repository"
-                              : "Connect a read-only token"}
-                      </small>
-                    </span>
-                    <span className="readiness-action">
-                      {!repoReady
-                        ? "WAITING"
-                        : githubReady
-                          ? "CONNECTED"
-                          : "CONNECT"}
-                    </span>
-                  </summary>
-                  <form
-                    className="github-connect-panel"
-                    onSubmit={saveGitHubKey}
+                  <AccordionItem
+                    className={`readiness-connect ${
+                      githubReady ? "is-ready" : ""
+                    }`}
+                    value="github"
                   >
-                    <div className="github-connect-head">
-                      <div>
-                        <strong>GitHub repository access</strong>
-                        <span>
-                          Verify contents, issues, and pull-request access.
-                        </span>
-                      </div>
-                      <span className="github-depth-badge">DEEP SCAN</span>
-                    </div>
-                    <label htmlFor="github-access-key">
-                      Fine-grained personal access token
-                    </label>
-                    <input
-                      id="github-access-key"
-                      name="githubAccessKey"
-                      type="password"
-                      value={githubKey}
-                      onChange={(event) => setGitHubKey(event.target.value)}
-                      placeholder={
-                        runtimeConfig?.github_configured
-                          ? "Use the connected server token"
-                          : "github_pat_…"
-                      }
-                      autoComplete="off"
-                      spellCheck={false}
-                      disabled={
-                        runtimeConfig?.credential_input_enabled === false ||
-                        savingGitHubKey
-                      }
-                    />
-                    <p>
-                      Use a token with read access to Contents, Issues, Pull
-                      requests, and Metadata. A token entered here is sent to
-                      your local backend, held only in memory, and never
-                      returned to the browser.
-                    </p>
-                    {runtimeConfig?.credential_input_enabled === false ? (
-                      <div
-                        className="hero-model-feedback is-error"
-                        role="alert"
-                      >
-                        Browser key entry is disabled in production. Configure
-                        GITHUB_TOKEN on the server.
-                      </div>
-                    ) : null}
-                    {githubKeyMessage ? (
-                      <div className="hero-model-feedback" role="status">
-                        {githubKeyMessage}
-                      </div>
-                    ) : null}
-                    {githubKeyError ? (
-                      <div
-                        className="hero-model-feedback is-error"
-                        role="alert"
-                      >
-                        {githubKeyError}
-                      </div>
-                    ) : null}
-                    <div className="github-connect-actions">
-                      <a
-                        href="https://github.com/settings/personal-access-tokens/new"
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Create token ↗
-                      </a>
-                      <button
-                        type="submit"
-                        disabled={
-                          !repoReady ||
-                          savingGitHubKey ||
-                          (runtimeConfig?.credential_input_enabled === false &&
-                            !runtimeConfig.github_configured)
-                        }
-                      >
-                        {savingGitHubKey
-                          ? "Verifying…"
-                          : runtimeConfig?.github_configured && !githubKey
-                            ? "Verify connection"
-                            : "Connect GitHub"}
-                      </button>
-                    </div>
-                  </form>
-                </details>
-                <details
-                  className={`readiness-row readiness-connect documentation-connect ${
-                    documentationReady ? "is-ready" : ""
-                  }`}
-                >
-                  <summary>
-                    <span className="readiness-check" aria-hidden="true">
-                      {documentationReady ? "✓" : "3"}
-                    </span>
-                    <span className="readiness-copy">
-                      <strong>Official documentation</strong>
-                      <small>
-                        {resolvingSources
-                          ? "Discovering the canonical docs repo and folder…"
-                          : documentationSource
-                            ? `${documentationSourceLabel(documentationSource)}${
-                                documentationSource.page_count !== null
-                                  ? ` · ${documentationSource.page_count} pages`
-                                  : ""
-                              }`
+                    <AccordionTrigger className="readiness-trigger">
+                      <span className="readiness-check" aria-hidden="true">
+                        {githubReady ? "✓" : "1"}
+                      </span>
+                      <span className="readiness-copy">
+                        <strong>GitHub access</strong>
+                        <small>
+                          {!repoReady
+                            ? "Paste a repository before connecting"
                             : githubReady
-                              ? "Open to retry or choose a source"
-                              : "Connect GitHub to discover it automatically"}
-                      </small>
-                    </span>
-                    <span className="readiness-action">
-                      {resolvingSources
-                        ? "FINDING"
-                        : documentationReady
-                          ? "REVIEW"
-                          : "REQUIRED"}
-                    </span>
-                  </summary>
-                  <div className="github-connect-panel docs-source-panel">
-                    <div className="github-connect-head">
-                      <div>
-                        <strong>Documentation source</strong>
-                        <span>
-                          Confirm where DocsHound reads pages and documentation
-                          activity.
-                        </span>
-                      </div>
-                      <span className="github-depth-badge">AUTO-DETECTED</span>
-                    </div>
-                    {documentationSource ? (
-                      <div className="docs-source-current">
-                        <div>
-                          <strong>
-                            {documentationSourceLabel(documentationSource)}
-                          </strong>
-                          <span>
-                            {documentationSource.page_count ?? "Uncounted"}{" "}
-                            pages ·{" "}
-                            {documentationSource.discovered_by.replaceAll(
-                              "_",
-                              " ",
-                            )}
-                          </span>
-                        </div>
-                        {documentationSource.url ? (
+                              ? `${runtimeConfig?.github_account || "GitHub"} · deep scan enabled`
+                              : "Connect a read-only token"}
+                        </small>
+                      </span>
+                      <span className="readiness-action">
+                        {githubReady ? "READY" : "WAITING"}
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <form
+                        className="github-connect-panel"
+                        onSubmit={saveGitHubKey}
+                      >
+                        <label htmlFor="github-access-key">
+                          Fine-grained personal access token
+                        </label>
+                        <input
+                          id="github-access-key"
+                          name="githubAccessKey"
+                          type="password"
+                          value={githubKey}
+                          onChange={(event) => setGitHubKey(event.target.value)}
+                          placeholder="github_pat_…"
+                          autoComplete="off"
+                          spellCheck={false}
+                          required
+                          disabled={
+                            runtimeConfig?.credential_input_enabled === false ||
+                            savingGitHubKey
+                          }
+                        />
+                        {runtimeConfig?.credential_input_enabled === false ? (
+                          <div
+                            className="connection-feedback is-error"
+                            role="alert"
+                          >
+                            Browser key entry is disabled in production.
+                            Configure GITHUB_TOKEN on the server.
+                          </div>
+                        ) : null}
+                        {githubKeyMessage ? (
+                          <div className="connection-feedback" role="status">
+                            {githubKeyMessage}
+                          </div>
+                        ) : null}
+                        {githubKeyError ? (
+                          <div
+                            className="connection-feedback is-error"
+                            role="alert"
+                          >
+                            {githubKeyError}
+                          </div>
+                        ) : null}
+                        <div className="github-connect-actions">
                           <a
-                            href={documentationSource.url}
+                            href="https://github.com/settings/personal-access-tokens/new"
                             target="_blank"
                             rel="noreferrer"
                           >
-                            Open ↗
+                            Create token ↗
                           </a>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {sourceResolution?.documentation_sources.length ? (
-                      <label className="docs-source-choice">
-                        Detected source
-                        <select
-                          value={sourceResolution.documentation_sources.findIndex(
-                            (source) =>
-                              source.repo === documentationSource?.repo &&
-                              source.root === documentationSource?.root,
-                          )}
-                          onChange={(event) => {
-                            const source =
-                              sourceResolution.documentation_sources[
-                                Number(event.target.value)
-                              ];
-                            if (source) {
-                              setDocumentationSource(source);
-                              setOverrideRepo(source.repo || "");
-                              setOverrideRoot(source.root || "");
+                          <button
+                            type="submit"
+                            disabled={
+                              !repoReady ||
+                              !githubKey.trim() ||
+                              savingGitHubKey ||
+                              runtimeConfig?.credential_input_enabled === false
                             }
-                          }}
-                        >
-                          {sourceResolution.documentation_sources.map(
-                            (source, index) => (
-                              <option
-                                value={index}
-                                key={`${source.repo}-${source.root}`}
+                          >
+                            {savingGitHubKey ? "Verifying…" : "Connect GitHub"}
+                          </button>
+                        </div>
+                      </form>
+                    </AccordionContent>
+                  </AccordionItem>
+                  <AccordionItem
+                    className={`readiness-connect documentation-connect ${
+                      documentationReady ? "is-ready" : ""
+                    }`}
+                    value="documentation"
+                  >
+                    <AccordionTrigger className="readiness-trigger">
+                      <span className="readiness-check" aria-hidden="true">
+                        {documentationReady ? "✓" : "2"}
+                      </span>
+                      <span className="readiness-copy">
+                        <strong>Official documentation</strong>
+                        <small>
+                          {resolvingSources
+                            ? "Discovering the canonical docs repo and folder…"
+                            : documentationSource
+                              ? `${documentationSourceLabel(documentationSource)}${
+                                  documentationSource.page_count !== null
+                                    ? ` · ${documentationSource.page_count} pages`
+                                    : ""
+                                }`
+                              : githubReady
+                                ? "Open to retry or choose a source"
+                                : "Connect GitHub to discover it automatically"}
+                        </small>
+                      </span>
+                      <span className="readiness-action">
+                        {documentationReady ? "READY" : "WAITING"}
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <div className="github-connect-panel docs-source-panel">
+                        {documentationSource ? (
+                          <div className="docs-source-current">
+                            <div>
+                              <strong>
+                                {documentationSourceLabel(documentationSource)}
+                              </strong>
+                              <span>
+                                {documentationSource.page_count ?? "Uncounted"}{" "}
+                                pages ·{" "}
+                                {documentationSource.discovered_by.replaceAll(
+                                  "_",
+                                  " ",
+                                )}
+                              </span>
+                            </div>
+                            {documentationSource.url ? (
+                              <a
+                                href={documentationSource.url}
+                                target="_blank"
+                                rel="noreferrer"
                               >
-                                {documentationSourceLabel(source)} ·{" "}
-                                {source.page_count} pages
-                              </option>
-                            ),
-                          )}
-                        </select>
-                      </label>
-                    ) : null}
-                    {documentationSource?.repo &&
-                    documentationSource.repo.toLowerCase() !==
-                      selectedRepo?.toLowerCase() ? (
-                      <label className="docs-activity-toggle">
-                        <input
-                          type="checkbox"
-                          checked={includeDocumentationActivity}
-                          onChange={(event) =>
-                            setIncludeDocumentationActivity(
-                              event.target.checked,
+                                Open ↗
+                              </a>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {sourceResolution?.documentation_sources.length ? (
+                          <label className="docs-source-choice">
+                            Detected source
+                            <select
+                              value={sourceResolution.documentation_sources.findIndex(
+                                (source) =>
+                                  source.repo === documentationSource?.repo &&
+                                  source.root === documentationSource?.root,
+                              )}
+                              onChange={(event) => {
+                                const source =
+                                  sourceResolution.documentation_sources[
+                                    Number(event.target.value)
+                                  ];
+                                if (source) {
+                                  setDocumentationSource(source);
+                                  setOverrideRepo(source.repo || "");
+                                  setOverrideRoot(source.root || "");
+                                }
+                              }}
+                            >
+                              {sourceResolution.documentation_sources.map(
+                                (source, index) => (
+                                  <option
+                                    value={index}
+                                    key={`${source.repo}-${source.root}`}
+                                  >
+                                    {documentationSourceLabel(source)} ·{" "}
+                                    {source.page_count} pages
+                                  </option>
+                                ),
+                              )}
+                            </select>
+                          </label>
+                        ) : null}
+                        <Accordion
+                          className="docs-source-options"
+                          value={showSourceOverride ? ["source-override"] : []}
+                          onValueChange={(value) =>
+                            setShowSourceOverride(
+                              value.includes("source-override"),
                             )
                           }
-                        />
-                        <span>
-                          Also analyze issues and merged PRs from{" "}
-                          {documentationSource.repo}
-                        </span>
-                      </label>
-                    ) : (
-                      <p className="docs-activity-note">
-                        Documentation activity is already included because the
-                        pages live in the product repository.
-                      </p>
-                    )}
-                    <button
-                      className="docs-source-change"
-                      type="button"
-                      onClick={() =>
-                        setShowSourceOverride((current) => !current)
-                      }
-                    >
-                      {showSourceOverride ? "Cancel override" : "Change source"}
-                    </button>
-                    {showSourceOverride ? (
+                        >
+                          <AccordionItem value="source-override">
+                            <div className="docs-source-options-row">
+                              {documentationSource ? (
+                                documentationSource.repo &&
+                                documentationSource.repo.toLowerCase() !==
+                                  selectedRepo?.toLowerCase() ? (
+                                  <label className="docs-activity-toggle">
+                                    <input
+                                      type="checkbox"
+                                      checked={includeDocumentationActivity}
+                                      onChange={(event) =>
+                                        setIncludeDocumentationActivity(
+                                          event.target.checked,
+                                        )
+                                      }
+                                    />
+                                    <span>
+                                      Also analyze issues and merged PRs from{" "}
+                                      {documentationSource.repo}
+                                    </span>
+                                  </label>
+                                ) : (
+                                  <p className="docs-activity-note">
+                                    Activity already included for this
+                                    repository.
+                                  </p>
+                                )
+                              ) : (
+                                <p className="docs-activity-note">
+                                  Connect GitHub to auto-discover the source.
+                                </p>
+                              )}
+                              <AccordionTrigger className="docs-source-change">
+                                {showSourceOverride
+                                  ? "Cancel"
+                                  : "Change source"}
+                              </AccordionTrigger>
+                            </div>
+                            <AccordionContent className="docs-source-override-content">
+                              <form
+                                className="docs-source-override"
+                                onSubmit={applyDocumentationOverride}
+                              >
+                                <label htmlFor="documentation-repo">
+                                  Documentation repository
+                                </label>
+                                <input
+                                  id="documentation-repo"
+                                  value={overrideRepo}
+                                  onChange={(event) =>
+                                    setOverrideRepo(event.target.value)
+                                  }
+                                  placeholder="owner/documentation-repo"
+                                  required
+                                />
+                                <label htmlFor="documentation-root">
+                                  Documentation folder <span>optional</span>
+                                </label>
+                                <input
+                                  id="documentation-root"
+                                  value={overrideRoot}
+                                  onChange={(event) =>
+                                    setOverrideRoot(event.target.value)
+                                  }
+                                  placeholder="content/en/docs"
+                                />
+                                <button type="submit">Use this source</button>
+                              </form>
+                            </AccordionContent>
+                          </AccordionItem>
+                        </Accordion>
+                        {sourceError ? (
+                          <div
+                            className="connection-feedback is-error"
+                            role="alert"
+                          >
+                            {sourceError}
+                          </div>
+                        ) : null}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                  <AccordionItem
+                    className={`readiness-connect ${
+                      modelReady ? "is-ready" : ""
+                    }`}
+                    id="model-connection"
+                    value="model"
+                  >
+                    <AccordionTrigger className="readiness-trigger">
+                      <span className="readiness-check" aria-hidden="true">
+                        {modelReady ? "✓" : "3"}
+                      </span>
+                      <span className="readiness-copy">
+                        <strong>Model connection</strong>
+                        <small>
+                          {modelReady
+                            ? `${runtimeConfig?.llm_primary_model ? modelLabel(runtimeConfig.llm_primary_model) : "Gemini 3.7 Flash"} connected`
+                            : "Merge Gateway key required"}
+                        </small>
+                      </span>
+                      <span className="readiness-action">
+                        {modelReady ? "READY" : "WAITING"}
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent>
                       <form
-                        className="docs-source-override"
-                        onSubmit={applyDocumentationOverride}
+                        className="github-connect-panel model-connect-panel"
+                        onSubmit={saveGatewayKey}
                       >
-                        <label htmlFor="documentation-repo">
-                          Documentation repository
+                        <label htmlFor="merge-gateway-key">
+                          Merge Gateway API key
                         </label>
                         <input
-                          id="documentation-repo"
-                          value={overrideRepo}
+                          id="merge-gateway-key"
+                          name="mergeGatewayApiKey"
+                          type="password"
+                          value={gatewayKey}
                           onChange={(event) =>
-                            setOverrideRepo(event.target.value)
+                            setGatewayKey(event.target.value)
                           }
-                          placeholder="owner/documentation-repo"
+                          placeholder="Enter your key"
+                          autoComplete="off"
+                          spellCheck={false}
+                          disabled={
+                            runtimeConfig?.credential_input_enabled === false ||
+                            savingGatewayKey
+                          }
                           required
                         />
-                        <label htmlFor="documentation-root">
-                          Documentation folder <span>optional</span>
-                        </label>
-                        <input
-                          id="documentation-root"
-                          value={overrideRoot}
-                          onChange={(event) =>
-                            setOverrideRoot(event.target.value)
+                        <p>
+                          Sent to your local DocsHound backend and held only in
+                          memory until the server restarts.
+                        </p>
+                        {runtimeConfig?.credential_input_enabled === false ? (
+                          <div
+                            className="connection-feedback is-error"
+                            role="alert"
+                          >
+                            Browser key entry is disabled in production.
+                            Configure the server secret instead.
+                          </div>
+                        ) : null}
+                        {gatewayKeyMessage ? (
+                          <div className="connection-feedback" role="status">
+                            {gatewayKeyMessage}
+                          </div>
+                        ) : null}
+                        {gatewayKeyError ? (
+                          <div
+                            className="connection-feedback is-error"
+                            role="alert"
+                          >
+                            {gatewayKeyError}
+                          </div>
+                        ) : null}
+                        <button
+                          type="submit"
+                          disabled={
+                            runtimeConfig?.credential_input_enabled === false ||
+                            savingGatewayKey
                           }
-                          placeholder="content/en/docs"
-                        />
-                        <button type="submit">Use this source</button>
+                        >
+                          {savingGatewayKey ? "Connecting…" : "Save connection"}
+                        </button>
                       </form>
-                    ) : null}
-                    {sourceError ? (
-                      <div
-                        className="hero-model-feedback is-error"
-                        role="alert"
-                      >
-                        {sourceError}
-                      </div>
-                    ) : null}
-                  </div>
-                </details>
-                <div
-                  className={`readiness-row ${modelReady ? "is-ready" : ""}`}
-                >
-                  <span className="readiness-check" aria-hidden="true">
-                    {modelReady ? "✓" : "4"}
-                  </span>
-                  <span className="readiness-copy">
-                    <strong>Model connection</strong>
-                    <small>
-                      {modelReady
-                        ? `${runtimeConfig?.llm_primary_model ? modelLabel(runtimeConfig.llm_primary_model) : "Gemini 3.7 Flash"} connected`
-                        : "Merge Gateway key required"}
-                    </small>
-                  </span>
-                  <button
-                    className="readiness-action"
-                    type="button"
-                    onClick={() => {
-                      const picker =
-                        document.querySelector<HTMLDetailsElement>(
-                          "#model-connection",
-                        );
-                      if (picker) {
-                        picker.open = true;
-                        picker.scrollIntoView({
-                          behavior: "smooth",
-                          block: "center",
-                        });
-                      }
-                    }}
-                  >
-                    {modelReady ? "READY" : "CONFIGURE"}
-                  </button>
-                </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
               </section>
-              <details className="hero-model-picker" id="model-connection">
-                <summary>
-                  <span
-                    className={`hero-model-status ${
-                      runtimeConfig?.llm_configured ? "is-connected" : ""
-                    }`}
-                  />
-                  <span className="hero-model-name">
-                    {runtimeConfig?.llm_primary_model
-                      ? modelLabel(runtimeConfig.llm_primary_model)
-                      : "Gemini 3.7 Flash"}
-                  </span>
-                  <span className="hero-model-via">via Merge Gateway</span>
-                  <span className="hero-model-chevron" aria-hidden="true">
-                    ▾
-                  </span>
-                </summary>
-                <form className="hero-model-menu" onSubmit={saveGatewayKey}>
-                  <div className="hero-model-menu-head">
-                    <div>
-                      <strong>Model connection</strong>
-                      <span>
-                        {runtimeConfig?.llm_configured
-                          ? "Connected"
-                          : "API key required"}
-                      </span>
-                    </div>
-                    <span
-                      className={`hero-model-badge ${
-                        runtimeConfig?.llm_configured ? "is-connected" : ""
-                      }`}
-                    >
-                      {runtimeConfig?.llm_configured ? "READY" : "SETUP"}
-                    </span>
-                  </div>
-                  <label htmlFor="merge-gateway-key">
-                    Merge Gateway API key
-                  </label>
-                  <input
-                    id="merge-gateway-key"
-                    name="mergeGatewayApiKey"
-                    type="password"
-                    value={gatewayKey}
-                    onChange={(event) => setGatewayKey(event.target.value)}
-                    placeholder="Enter your key"
-                    autoComplete="off"
-                    spellCheck={false}
-                    disabled={
-                      runtimeConfig?.credential_input_enabled === false ||
-                      savingGatewayKey
-                    }
-                    required
-                  />
-                  <p>
-                    Sent to your local DocsHound backend and held only in memory
-                    until the server restarts.
-                  </p>
-                  {runtimeConfig?.credential_input_enabled === false ? (
-                    <div className="hero-model-feedback is-error" role="alert">
-                      Browser key entry is disabled in production. Configure the
-                      server secret instead.
-                    </div>
-                  ) : null}
-                  {gatewayKeyMessage ? (
-                    <div className="hero-model-feedback" role="status">
-                      {gatewayKeyMessage}
-                    </div>
-                  ) : null}
-                  {gatewayKeyError ? (
-                    <div className="hero-model-feedback is-error" role="alert">
-                      {gatewayKeyError}
-                    </div>
-                  ) : null}
-                  <button
-                    type="submit"
-                    disabled={
-                      runtimeConfig?.credential_input_enabled === false ||
-                      savingGatewayKey
-                    }
-                  >
-                    {savingGatewayKey ? "Connecting…" : "Save connection"}
-                  </button>
-                </form>
-              </details>
               <div className="hero-agent-orbit" aria-hidden="true">
                 <div className="hero-agent-float hero-agent-opencode">
                   <div className="hero-agent-tile">
