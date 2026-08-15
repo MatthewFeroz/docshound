@@ -80,8 +80,7 @@ existing local installations):
 
 ```text
 APP_ENV=development   # set to production to disable browser key entry
-GITHUB_TOKEN=          # authenticated deep documentation scans
-GITHUB_WRITE_TOKEN=    # optional: create documentation branches and PRs
+GITHUB_TOKEN=          # optional server token for scans and documentation PRs
 MERGE_GATEWAY_API_KEY= # recommended: model-based analysis through Gateway
 MERGE_GATEWAY_PRIMARY_MODEL=google/gemini-3.7-flash
 MERGE_GATEWAY_FALLBACK_MODEL=openai/gpt-5.6-luna
@@ -107,13 +106,14 @@ Values prefixed with `VITE_` are public and embedded in the browser bundle.
 Never place Merge Gateway, model-provider, or GitHub credentials in the
 frontend environment.
 
-In local development, the homepage readiness checklist can verify a read-only
-GitHub token against the selected repository and the model connection menu can
-send a Merge Gateway key to the backend. These overrides are held only in
-backend process memory and cleared on restart. DocsHound automatically resolves
-the official documentation repository and folder from repository structure,
-README links, the GitHub homepage, and “Edit this page on GitHub” links. The
-detected source is shown before each run and can be overridden.
+In local development, the homepage readiness checklist can verify one GitHub
+token for repository research and documentation pull requests, and the model
+connection menu can send a Merge Gateway key to the backend. These overrides
+are held only in backend process memory and cleared on restart. DocsHound
+automatically resolves the official documentation repository and folder from
+repository structure, README links, the GitHub homepage, and “Edit this page on
+GitHub” links. The detected source is shown before each run and can be
+overridden.
 
 For a confirmed documentation root containing at most 100 Markdown or MDX
 pages, an authenticated run reads the complete corpus before ranking the best

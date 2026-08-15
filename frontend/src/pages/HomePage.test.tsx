@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   resolveSources: vi.fn(),
   setGitHubApiKey: vi.fn(),
   setMergeGatewayApiKey: vi.fn(),
+  scrollIntoView: vi.fn(),
   eventHandler: undefined as ((event: unknown) => void) | undefined,
 }));
 
@@ -96,7 +97,7 @@ async function connectGitHub(container: HTMLElement) {
       "github_pat_secret",
     ),
   );
-  await screen.findByText(/deep scan enabled/i);
+  await screen.findByText(/repository access connected/i);
 }
 
 describe("HomePage live analysis", () => {
@@ -108,6 +109,11 @@ describe("HomePage live analysis", () => {
     mocks.resolveSources.mockReset();
     mocks.setGitHubApiKey.mockReset();
     mocks.setMergeGatewayApiKey.mockReset();
+    mocks.scrollIntoView.mockReset();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: mocks.scrollIntoView,
+    });
     mocks.getRuntimeConfig.mockResolvedValue({
       write_enabled: false,
       llm_gateway: "merge",
@@ -256,7 +262,9 @@ describe("HomePage live analysis", () => {
       ),
     );
     await waitFor(() => expect(keyInput).toHaveValue(""));
-    expect(await screen.findByText(/deep scan enabled/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/repository access connected/i),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /run agent/i })).toBeEnabled(),
     );
@@ -286,6 +294,7 @@ describe("HomePage live analysis", () => {
     );
 
     await waitFor(() => expect(mocks.eventHandler).toBeDefined());
+    mocks.scrollIntoView.mockClear();
     act(() => {
       mocks.eventHandler?.({
         type: "gap_found",
@@ -296,6 +305,12 @@ describe("HomePage live analysis", () => {
 
     expect(await screen.findByText("Retry behavior")).toBeInTheDocument();
     expect(screen.getByText("1 found")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mocks.scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "nearest",
+      }),
+    );
   });
 
   it("shows a separate official docs repo and includes its activity", async () => {

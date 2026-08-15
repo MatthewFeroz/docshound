@@ -75,6 +75,8 @@ export function PullRequestPage() {
     );
   if (!payload) return <Loading label="Loading repository change…" />;
   const change = payload.documentation_change;
+  const displayError =
+    error || (change?.status === "failed" ? change.error : null);
 
   return (
     <div className="document-shell">
@@ -113,10 +115,10 @@ export function PullRequestPage() {
             Confirm where the approved document belongs, inspect the patch, and
             create a normal documentation pull request.
           </p>
-          {error ? (
+          {displayError ? (
             <div className="pr-alert" role="alert">
               <strong>Could not complete the request.</strong>
-              <span>{error}</span>
+              <span>{displayError}</span>
             </div>
           ) : null}
           <form className="pr-target-form" onSubmit={refreshPreview}>
@@ -196,6 +198,14 @@ export function PullRequestPage() {
                         correct.
                       </span>
                     </>
+                  ) : displayError ? (
+                    <>
+                      <strong>Publication needs attention</strong>
+                      <span>
+                        Follow the guidance above, refresh the preview, and try
+                        again.
+                      </span>
+                    </>
                   ) : payload.write_enabled ? (
                     <>
                       <strong>Ready to create the pull request</strong>
@@ -208,8 +218,8 @@ export function PullRequestPage() {
                     <>
                       <strong>Preview mode</strong>
                       <span>
-                        Connect repository write access to enable the final
-                        create step.
+                        Connect GitHub from the homepage with one token that can
+                        read the source and publish to the destination.
                       </span>
                     </>
                   )}

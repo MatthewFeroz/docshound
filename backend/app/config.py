@@ -9,7 +9,6 @@ class Settings(BaseSettings):
     app_env: str = "development"
 
     github_token: str | None = None
-    github_write_token: str | None = None
 
     merge_gateway_api_key: str | None = None
     merge_gateway_base_url: str = "https://api-gateway.merge.dev/v1/openai"

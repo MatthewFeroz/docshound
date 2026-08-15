@@ -4,11 +4,12 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 
-from app.approved_documents import ApprovedDocument
 from app import documentation_prs, run_store
+from app.approved_documents import ApprovedDocument
 from app.documentation_prs import (
     create_documentation_pull_request,
     prepare_documentation_change,
@@ -21,6 +22,11 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_change_db = documentation_prs.DB_PATH
         documentation_prs.DB_PATH = Path(self.temp_dir.name) / "changes.db"
+        self.configured_token_patcher = patch(
+            "app.documentation_prs.configured_github_token",
+            return_value=None,
+        )
+        self.configured_token = self.configured_token_patcher.start()
         self.document = ApprovedDocument(
             slug="retry-guide-run12345-1",
             run_id="run12345-aaaa-bbbb-cccc-dddddddddddd",
@@ -46,8 +52,14 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
         )
 
     def tearDown(self) -> None:
+        self.configured_token_patcher.stop()
         documentation_prs.DB_PATH = self.original_change_db
         self.temp_dir.cleanup()
+
+    def test_write_enabled_uses_the_connected_token(self) -> None:
+        self.assertFalse(documentation_prs.write_enabled())
+        self.configured_token.return_value = "connected-token"
+        self.assertTrue(documentation_prs.write_enabled())
 
     async def test_prepare_detects_mdx_repository_and_builds_patch(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -89,14 +101,23 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("## Sources", change.content)
         self.assertTrue(change.patch.startswith("--- /dev/null"))
 
-    async def test_create_branch_commit_and_pull_request(self) -> None:
+    async def test_connected_token_creates_branch_commit_and_pull_request(
+        self,
+    ) -> None:
         requests: list[tuple[str, str, dict | None]] = []
+        self.configured_token.return_value = "connected-token"
 
         def handler(request: httpx.Request) -> httpx.Response:
             payload = json.loads(request.content) if request.content else None
             requests.append((request.method, request.url.path, payload))
             if request.url.path == "/repos/acme/docs":
-                return httpx.Response(200, json={"default_branch": "main"})
+                return httpx.Response(
+                    200,
+                    json={
+                        "default_branch": "main",
+                        "permissions": {"push": True},
+                    },
+                )
             if request.url.path == "/repos/acme/docs/git/trees/main":
                 return httpx.Response(
                     200,
@@ -139,7 +160,6 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
             created = await create_documentation_pull_request(
                 self.document,
                 change,
-                token="test-token",
                 client=client,
             )
 
@@ -163,6 +183,149 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(pull_request["base"], "main")
         self.assertIn("Evidence", pull_request["body"])
+
+    async def test_readable_upstream_recommends_writable_fork(self) -> None:
+        self.configured_token.return_value = "connected-token"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/repos/upstream/pi":
+                return httpx.Response(
+                    200,
+                    json={
+                        "full_name": "upstream/pi",
+                        "default_branch": "main",
+                        "permissions": {"push": False},
+                    },
+                )
+            if request.url.path == "/user":
+                return httpx.Response(200, json={"login": "matt"})
+            if request.url.path == "/repos/matt/pi":
+                return httpx.Response(
+                    200,
+                    json={
+                        "full_name": "matt/pi",
+                        "fork": True,
+                        "parent": {"full_name": "upstream/pi"},
+                        "source": {"full_name": "upstream/pi"},
+                        "permissions": {"push": True},
+                    },
+                )
+            return httpx.Response(404, json={"message": "not found"})
+
+        async with httpx.AsyncClient(
+            base_url="https://api.github.test",
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            with self.assertRaisesRegex(
+                documentation_prs.DocumentationPullRequestError,
+                "Change Documentation repository to matt/pi",
+            ) as raised:
+                await prepare_documentation_change(
+                    self.document,
+                    target_repo="upstream/pi",
+                    client=client,
+                )
+
+        message = str(raised.exception)
+        self.assertIn("can read upstream/pi", message)
+        self.assertIn("cannot publish there", message)
+        self.assertIn("Contents: read/write", message)
+        self.assertIn("Pull requests: read/write", message)
+        self.assertIn("This attempt did not create a branch", message)
+
+    async def test_branch_permission_error_explains_contents_access(self) -> None:
+        self.configured_token.return_value = "connected-token"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/repos/acme/docs":
+                return httpx.Response(
+                    200,
+                    json={
+                        "default_branch": "main",
+                        "permissions": {"push": True},
+                    },
+                )
+            if request.url.path == "/repos/acme/docs/git/trees/main":
+                return httpx.Response(200, json={"tree": []})
+            if request.method == "GET" and request.url.path.endswith(
+                "/git/ref/heads/main"
+            ):
+                return httpx.Response(200, json={"object": {"sha": "base-sha"}})
+            if request.method == "POST" and request.url.path.endswith("/git/refs"):
+                return httpx.Response(403, json={"message": "Resource not accessible"})
+            return httpx.Response(404, json={"message": "not found"})
+
+        async with httpx.AsyncClient(
+            base_url="https://api.github.test",
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            change = await prepare_documentation_change(
+                self.document,
+                target_repo="acme/docs",
+                client=client,
+            )
+            with self.assertRaises(
+                documentation_prs.DocumentationPullRequestError
+            ) as raised:
+                await create_documentation_pull_request(
+                    self.document,
+                    change,
+                    client=client,
+                )
+
+        message = str(raised.exception)
+        self.assertIn("writing documentation to acme/docs", message)
+        self.assertIn("Contents: read/write", message)
+        self.assertIn("No pull request was created", message)
+
+    async def test_pull_request_permission_error_explains_safe_retry(self) -> None:
+        self.configured_token.return_value = "connected-token"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/repos/acme/docs":
+                return httpx.Response(
+                    200,
+                    json={
+                        "default_branch": "main",
+                        "permissions": {"push": True},
+                    },
+                )
+            if request.url.path == "/repos/acme/docs/git/trees/main":
+                return httpx.Response(200, json={"tree": []})
+            if request.method == "GET" and request.url.path.endswith(
+                "/git/ref/heads/main"
+            ):
+                return httpx.Response(200, json={"object": {"sha": "base-sha"}})
+            if request.method == "POST" and request.url.path.endswith("/git/refs"):
+                return httpx.Response(201, json={"ref": "refs/heads/docs"})
+            if request.method == "PUT" and "/contents/" in request.url.path:
+                return httpx.Response(201, json={"commit": {"sha": "commit-sha"}})
+            if request.method == "POST" and request.url.path.endswith("/pulls"):
+                return httpx.Response(403, json={"message": "Resource not accessible"})
+            return httpx.Response(404, json={"message": "not found"})
+
+        async with httpx.AsyncClient(
+            base_url="https://api.github.test",
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            change = await prepare_documentation_change(
+                self.document,
+                target_repo="acme/docs",
+                client=client,
+            )
+            with self.assertRaises(
+                documentation_prs.DocumentationPullRequestError
+            ) as raised:
+                await create_documentation_pull_request(
+                    self.document,
+                    change,
+                    client=client,
+                )
+
+        message = str(raised.exception)
+        self.assertIn("documentation branch was prepared", message)
+        self.assertIn("Pull requests: read/write", message)
+        self.assertIn("reuse the existing branch", message)
 
     async def test_update_preserves_existing_page_and_appends_focused_section(self) -> None:
         existing_page = (

@@ -3,6 +3,7 @@ import {
   type FormEvent,
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import { Link } from "react-router-dom";
@@ -177,6 +178,7 @@ function documentationSourceLabel(source: DocumentationSource): string {
 }
 
 export function HomePage() {
+  const timelineRef = useRef<HTMLOListElement>(null);
   const [repo, setRepo] = useState("");
   const [runId, setRunId] = useState<string | null>(null);
   const [run, setRun] = useState<Run | null>(null);
@@ -269,7 +271,9 @@ export function HomePage() {
       setRuntimeConfig(config);
       setBrowserVerifiedGitHubRepo(selectedRepo);
       setGitHubKey("");
-      setGitHubKeyMessage(`Verified read access to ${selectedRepo}.`);
+      setGitHubKeyMessage(
+        `Connected to ${selectedRepo}. DocsHound will use this token for research and documentation pull requests.`,
+      );
     } catch (credentialError) {
       setGitHubKeyError(
         credentialError instanceof Error
@@ -328,6 +332,22 @@ export function HomePage() {
     const interval = window.setInterval(() => void refreshRun(runId), 2500);
     return () => window.clearInterval(interval);
   }, [refreshRun, run?.status, runId]);
+
+  useEffect(() => {
+    if (events.length === 0) return;
+    const frame = window.requestAnimationFrame(() => {
+      const latestEvent = timelineRef.current?.lastElementChild;
+      if (!(latestEvent instanceof HTMLElement)) return;
+      const reduceMotion =
+        typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      latestEvent.scrollIntoView({
+        behavior: reduceMotion ? "auto" : "smooth",
+        block: "nearest",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [events.length]);
 
   async function startRun(event: React.FormEvent) {
     event.preventDefault();
@@ -623,8 +643,8 @@ export function HomePage() {
                           {!repoReady
                             ? "Paste a repository before connecting"
                             : githubReady
-                              ? `${runtimeConfig?.github_account || "GitHub"} · deep scan enabled`
-                              : "Connect a read-only token"}
+                              ? `${runtimeConfig?.github_account || "GitHub"} · repository access connected`
+                              : "Connect one GitHub token"}
                         </small>
                       </span>
                       <span className="readiness-action">
@@ -1090,7 +1110,7 @@ export function HomePage() {
                   </div>
                 </div>
               ) : null}
-              <ol className="timeline">
+              <ol className="timeline" ref={timelineRef} aria-live="polite">
                 {events.map((item) => (
                   <li key={item.id} className={`event kind-${item.kind}`}>
                     <span className="event-icon">{item.icon}</span>
