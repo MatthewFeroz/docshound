@@ -1,8 +1,13 @@
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from app.state import GapCluster, Issue, PullRequest
-from app.tools.cluster import _trace_analysis_inputs, _trace_cluster_outputs
+from app.tools.cluster import (
+    _ensure_demo_source_coverage,
+    _trace_analysis_inputs,
+    _trace_cluster_outputs,
+)
 
 
 class ClusterTracingTests(unittest.TestCase):
@@ -19,6 +24,7 @@ class ClusterTracingTests(unittest.TestCase):
                         state="open",
                         created_at=now,
                         updated_at=now,
+                        source_repo="acme/product",
                     )
                 ],
                 "pull_requests": [
@@ -31,6 +37,7 @@ class ClusterTracingTests(unittest.TestCase):
                         merged_at=datetime.now(timezone.utc),
                         created_at=now,
                         updated_at=now,
+                        source_repo="acme/product",
                     )
                 ],
             }
@@ -38,8 +45,10 @@ class ClusterTracingTests(unittest.TestCase):
 
         self.assertEqual(inputs["issue_count"], 1)
         self.assertEqual(inputs["issue_numbers"], [12])
+        self.assertEqual(inputs["issue_refs"], ["acme/product#12"])
         self.assertEqual(inputs["pull_request_count"], 1)
         self.assertEqual(inputs["pull_request_numbers"], [34])
+        self.assertEqual(inputs["pull_request_refs"], ["acme/product#34"])
         self.assertNotIn("body", str(inputs).lower())
         self.assertNotIn("sensitive", str(inputs).lower())
 
@@ -62,6 +71,57 @@ class ClusterTracingTests(unittest.TestCase):
         self.assertEqual(outputs["clusters"][0]["issue_numbers"], [12, 13])
         self.assertEqual(outputs["clusters"][0]["pr_numbers"], [34])
         self.assertEqual(outputs["clusters"][0]["confidence"], 0.91)
+
+    def test_demo_guardrail_links_an_omitted_issue_to_its_shipped_change(self) -> None:
+        now = datetime.now(timezone.utc)
+        issue = Issue(
+            number=42484,
+            title="Document non-interactive MCP add",
+            body="The CLI supports this behavior, but the reference omits it.",
+            url="https://github.com/anomalyco/opencode/issues/42484",
+            state="open",
+            created_at=now,
+            updated_at=now,
+            source_repo="anomalyco/opencode",
+        )
+        pull_request = PullRequest(
+            number=31054,
+            title="Support non-interactive MCP add",
+            url="https://github.com/anomalyco/opencode/pull/31054",
+            state="merged",
+            merged_at=now,
+            created_at=now,
+            updated_at=now,
+            source_repo="anomalyco/opencode",
+        )
+        finding = GapCluster(
+            name="Support non-interactive MCP add",
+            summary="The CLI behavior shipped.",
+            recurring_question="How do I use it?",
+            issue_numbers=[],
+            pr_numbers=[31054],
+            pr_refs=["anomalyco/opencode#31054"],
+            finding_type="shipped_change",
+            severity="medium",
+            confidence=0.9,
+        )
+
+        with patch(
+            "app.tools.cluster.pinned_issue_relationships",
+            return_value={42484: (31054,)},
+        ):
+            findings = _ensure_demo_source_coverage(
+                [finding],
+                [issue],
+                [pull_request],
+                product_repo="anomalyco/opencode",
+            )
+
+        self.assertEqual(findings[0].issue_numbers, [42484])
+        self.assertEqual(
+            findings[0].issue_refs,
+            ["anomalyco/opencode#42484"],
+        )
 
 
 if __name__ == "__main__":

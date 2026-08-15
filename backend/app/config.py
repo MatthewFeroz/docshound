@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
     docshound_db_path: str | None = None
+    docshound_demo_scenario: str | None = None
 
     allowed_origins: str = (
         "http://localhost:5173,http://127.0.0.1:5173,"

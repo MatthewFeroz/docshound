@@ -97,7 +97,7 @@ async function connectGitHub(container: HTMLElement) {
       "github_pat_secret",
     ),
   );
-  await screen.findByText(/repository access connected/i);
+  await screen.findByText(/token connected/i);
 }
 
 describe("HomePage live analysis", () => {
@@ -262,12 +262,74 @@ describe("HomePage live analysis", () => {
       ),
     );
     await waitFor(() => expect(keyInput).toHaveValue(""));
-    expect(
-      await screen.findByText(/repository access connected/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/token connected/i)).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /run agent/i })).toBeEnabled(),
     );
+  });
+
+  it("keeps the connected GitHub token when the repository changes", async () => {
+    const { container } = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+    const repoInput = screen.getByPlaceholderText(/paste your repo/i);
+
+    fireEvent.change(repoInput, { target: { value: "acme/product" } });
+    await connectGitHub(container);
+    await waitFor(() =>
+      expect(mocks.resolveSources).toHaveBeenCalledWith("acme/product"),
+    );
+
+    const otherSource = {
+      ...runningRun.documentation_source,
+      repo: "acme/other-product",
+      url: "https://github.com/acme/other-product/tree/main/docs",
+    };
+    mocks.resolveSources.mockResolvedValueOnce({
+      product_repo: "acme/other-product",
+      documentation_sources: [otherSource],
+      selected_source: otherSource,
+      documentation_activity_repos: [],
+    });
+
+    fireEvent.change(repoInput, { target: { value: "acme/other-product" } });
+
+    expect(
+      container.querySelector(".readiness-connect .readiness-action"),
+    ).toHaveTextContent("READY");
+    expect(
+      screen.queryByText(/connect one github token/i),
+    ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(mocks.resolveSources).toHaveBeenCalledWith("acme/other-product"),
+    );
+    expect(
+      await screen.findAllByText(/acme\/other-product \/ docs · 24 pages/i),
+    ).not.toHaveLength(0);
+  });
+
+  it("does not clear a GitHub token being entered when the repository changes", async () => {
+    const { container } = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+    const repoInput = screen.getByPlaceholderText(/paste your repo/i);
+
+    fireEvent.change(repoInput, { target: { value: "acme/product" } });
+    await waitFor(() =>
+      expect(container.querySelector(".readiness-connect")).toHaveAttribute(
+        "data-open",
+      ),
+    );
+    const keyInput = screen.getByLabelText(/fine-grained personal access/i);
+    fireEvent.change(keyInput, { target: { value: "github_pat_in_progress" } });
+
+    fireEvent.change(repoInput, { target: { value: "acme/other-product" } });
+
+    expect(keyInput).toHaveValue("github_pat_in_progress");
   });
 
   it("renders a gap as soon as it arrives on the event stream", async () => {

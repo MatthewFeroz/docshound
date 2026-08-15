@@ -4,6 +4,11 @@ from urllib.parse import quote
 import httpx
 
 from app.config import get_settings
+from app.demo_scenarios import (
+    include_recent_activity,
+    pinned_issue_numbers,
+    pinned_pull_request_numbers,
+)
 from app.runtime_credentials import get_github_api_token
 from app.state import Issue, PullRequest
 
@@ -80,16 +85,43 @@ async def validate_github_access(
     return account, repository_name
 
 
-async def research_repo(repo: str, limit: int) -> list[Issue]:
+async def research_repo(
+    repo: str,
+    limit: int,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> list[Issue]:
     headers = _github_headers(configured_github_token())
-
-    url = f"https://api.github.com/repos/{repo}/issues"
-
     issues: list[Issue] = []
-    async with httpx.AsyncClient(timeout=20) as client:
+    seen: set[int] = set()
+    owns_client = client is None
+    github = client or httpx.AsyncClient(
+        base_url="https://api.github.com",
+        timeout=20,
+    )
+    try:
+        for number in pinned_issue_numbers(repo):
+            response = await github.get(
+                f"/repos/{repo}/issues/{number}",
+                headers=headers,
+            )
+            payload = _github_payload(response, repo)
+            if "pull_request" in payload:
+                raise GitHubToolError(
+                    f"Demo source {repo}#{number} is a pull request, not an issue."
+                )
+            issue = _issue_from_payload(payload, repo)
+            issues.append(issue)
+            seen.add(issue.number)
+            if len(issues) >= limit:
+                return issues
+
+        if not include_recent_activity(repo):
+            return issues
+
         for page in range(1, 6):
-            response = await client.get(
-                url,
+            response = await github.get(
+                f"/repos/{repo}/issues",
                 headers=headers,
                 params={
                     "state": "all",
@@ -99,56 +131,65 @@ async def research_repo(repo: str, limit: int) -> list[Issue]:
                     "direction": "desc",
                 },
             )
-            if response.status_code == 404:
-                raise GitHubToolError(f"Repository not found or inaccessible: {repo}")
-            if response.status_code >= 400:
-                raise GitHubToolError(
-                    f"GitHub API failed with {response.status_code}: {response.text[:300]}"
-                )
-            items = response.json()
+            items = _github_payload(response, repo)
+            if not isinstance(items, list):
+                raise GitHubToolError("GitHub returned an invalid issues response.")
             if not items:
                 break
             for item in items:
-                if "pull_request" in item:
+                if "pull_request" in item or item["number"] in seen:
                     continue
-                issues.append(
-                    Issue(
-                        number=item["number"],
-                        title=item["title"],
-                        body=item.get("body"),
-                        url=item["html_url"],
-                        state=item["state"],
-                        labels=[label["name"] for label in item.get("labels", [])],
-                        comments_count=item.get("comments", 0),
-                        created_at=datetime.fromisoformat(
-                            item["created_at"].replace("Z", "+00:00")
-                        ),
-                        updated_at=datetime.fromisoformat(
-                            item["updated_at"].replace("Z", "+00:00")
-                        ),
-                        source_repo=repo,
-                    )
-                )
+                issue = _issue_from_payload(item, repo)
+                issues.append(issue)
+                seen.add(issue.number)
                 if len(issues) >= limit:
                     return issues
-    return issues
+        return issues
+    finally:
+        if owns_client:
+            await github.aclose()
 
 
 async def research_pull_requests(
     repo: str,
     limit: int,
     include_open: bool = False,
+    *,
+    client: httpx.AsyncClient | None = None,
 ) -> list[PullRequest]:
     """Fetch merged PRs, plus open PRs for a separate documentation repo."""
     headers = _github_headers(configured_github_token())
-
-    url = f"https://api.github.com/repos/{repo}/pulls"
     pull_requests: list[PullRequest] = []
+    seen: set[int] = set()
     target = min(limit, 30)
-    async with httpx.AsyncClient(timeout=20) as client:
+    owns_client = client is None
+    github = client or httpx.AsyncClient(
+        base_url="https://api.github.com",
+        timeout=20,
+    )
+    try:
+        for number in pinned_pull_request_numbers(repo):
+            response = await github.get(
+                f"/repos/{repo}/pulls/{number}",
+                headers=headers,
+            )
+            payload = _github_payload(response, repo)
+            pull_request = _pull_request_from_payload(payload, repo)
+            if pull_request.state != "merged" and not include_open:
+                raise GitHubToolError(
+                    f"Demo source {repo}#{number} is not a merged pull request."
+                )
+            pull_requests.append(pull_request)
+            seen.add(pull_request.number)
+            if len(pull_requests) >= target:
+                return pull_requests
+
+        if not include_recent_activity(repo):
+            return pull_requests
+
         for page in range(1, 6):
-            response = await client.get(
-                url,
+            response = await github.get(
+                f"/repos/{repo}/pulls",
                 headers=headers,
                 params={
                     "state": "all" if include_open else "closed",
@@ -158,41 +199,69 @@ async def research_pull_requests(
                     "direction": "desc",
                 },
             )
-            if response.status_code == 404:
-                raise GitHubToolError(f"Repository not found or inaccessible: {repo}")
-            if response.status_code >= 400:
-                raise GitHubToolError(
-                    f"GitHub API failed with {response.status_code}: {response.text[:300]}"
-                )
-            items = response.json()
+            items = _github_payload(response, repo)
+            if not isinstance(items, list):
+                raise GitHubToolError("GitHub returned an invalid pull-request response.")
             if not items:
                 break
             for item in items:
-                merged_at = item.get("merged_at")
-                if not merged_at and not (include_open and item.get("state") == "open"):
+                if item["number"] in seen:
                     continue
-                pull_requests.append(
-                    PullRequest(
-                        number=item["number"],
-                        title=item["title"],
-                        body=item.get("body"),
-                        url=item["html_url"],
-                        state="merged" if merged_at else "open",
-                        merged_at=(
-                            datetime.fromisoformat(merged_at.replace("Z", "+00:00"))
-                            if merged_at
-                            else None
-                        ),
-                        labels=[label["name"] for label in item.get("labels", [])],
-                        created_at=datetime.fromisoformat(
-                            item["created_at"].replace("Z", "+00:00")
-                        ),
-                        updated_at=datetime.fromisoformat(
-                            item["updated_at"].replace("Z", "+00:00")
-                        ),
-                        source_repo=repo,
-                    )
-                )
+                pull_request = _pull_request_from_payload(item, repo)
+                if pull_request.state != "merged" and not (
+                    include_open and item.get("state") == "open"
+                ):
+                    continue
+                pull_requests.append(pull_request)
+                seen.add(pull_request.number)
                 if len(pull_requests) >= target:
                     return pull_requests
-    return pull_requests
+        return pull_requests
+    finally:
+        if owns_client:
+            await github.aclose()
+
+
+def _github_payload(response: httpx.Response, repo: str):
+    if response.status_code == 404:
+        raise GitHubToolError(f"Repository or demo source not found: {repo}")
+    if response.status_code >= 400:
+        raise GitHubToolError(
+            f"GitHub API failed with {response.status_code}: {response.text[:300]}"
+        )
+    return response.json()
+
+
+def _issue_from_payload(item: dict, repo: str) -> Issue:
+    return Issue(
+        number=item["number"],
+        title=item["title"],
+        body=item.get("body"),
+        url=item["html_url"],
+        state=item["state"],
+        labels=[label["name"] for label in item.get("labels", [])],
+        comments_count=item.get("comments", 0),
+        created_at=datetime.fromisoformat(item["created_at"].replace("Z", "+00:00")),
+        updated_at=datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00")),
+        source_repo=repo,
+    )
+
+
+def _pull_request_from_payload(item: dict, repo: str) -> PullRequest:
+    merged_at = item.get("merged_at")
+    return PullRequest(
+        number=item["number"],
+        title=item["title"],
+        body=item.get("body"),
+        url=item["html_url"],
+        state="merged" if merged_at else "open",
+        merged_at=(
+            datetime.fromisoformat(merged_at.replace("Z", "+00:00"))
+            if merged_at
+            else None
+        ),
+        labels=[label["name"] for label in item.get("labels", [])],
+        created_at=datetime.fromisoformat(item["created_at"].replace("Z", "+00:00")),
+        updated_at=datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00")),
+        source_repo=repo,
+    )
