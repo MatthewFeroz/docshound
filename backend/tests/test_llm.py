@@ -9,11 +9,7 @@ from app.llm import complete_json, get_llm_route, require_json_array
 def _response(model: str, content: dict, total_tokens: int = 10) -> SimpleNamespace:
     return SimpleNamespace(
         model=model,
-        choices=[
-            SimpleNamespace(
-                message=SimpleNamespace(content=json.dumps(content))
-            )
-        ],
+        choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(content)))],
         usage=SimpleNamespace(
             prompt_tokens=total_tokens - 2,
             completion_tokens=2,

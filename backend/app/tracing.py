@@ -21,7 +21,6 @@ from opentelemetry.trace import Span, Status, StatusCode, Tracer
 from app import events
 from app.tracing_config import TraceExportConfig, resolve_trace_export_config
 
-
 _tracer: Tracer = trace.get_tracer("docshound.agent")
 _tracing_initialized = False
 logger = logging.getLogger(__name__)
@@ -56,9 +55,7 @@ def setup_tracing() -> bool:
         )
         trace.set_tracer_provider(provider)
 
-    provider.add_span_processor(
-        BatchSpanProcessor(_build_span_exporter(export_config))
-    )
+    provider.add_span_processor(BatchSpanProcessor(_build_span_exporter(export_config)))
 
     # The OpenAI SDK instrumentor also covers calls made through Merge
     # Gateway's OpenAI-compatible endpoint.

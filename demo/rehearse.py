@@ -12,7 +12,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -57,9 +56,7 @@ async def rehearse(scenario_name: str) -> None:
         research_repo(scenario.source_repository, 50),
         research_pull_requests(scenario.source_repository, 50),
     )
-    actual_issue_refs = {
-        f"{issue.source_repo}#{issue.number}" for issue in issues
-    }
+    actual_issue_refs = {f"{issue.source_repo}#{issue.number}" for issue in issues}
     actual_pr_refs = {
         f"{pull_request.source_repo}#{pull_request.number}"
         for pull_request in pull_requests

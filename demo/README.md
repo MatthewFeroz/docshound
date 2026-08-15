@@ -86,20 +86,17 @@ searches the fork's full documentation corpus, drafts both changes, and proves
 that each patch updates the existing `packages/web/src/content/docs/cli.mdx`.
 It uses a temporary local database and deletes it afterward.
 
-The preflight intentionally warns, but does not mutate anything, when the fork
-is behind upstream. To bring the fork's `dev` branch current before rehearsal,
-make that remote change explicitly:
-
-```bash
-gh repo sync MatthewFeroz/opencode --source anomalyco/opencode --branch dev
-```
+The fork's `dev` branch is intentionally held at the commit pinned in the
+scenario manifest. That stable snapshot preserves the known documentation gaps
+for the stage demo, so do not sync it immediately before presenting. The
+preflight fails if the fork moves away from the pinned commit.
 
 ## How it works
 
 - [`scenarios/opencode.json`](scenarios/opencode.json) is the stage manifest. It
   pins two issues and one merged PR, their exact titles and states, the source
-  and publish repositories, the docs target, implementation markers, and the
-  Merge Gateway model.
+  and publish commits, the docs target, implementation markers, and the Merge
+  Gateway model.
 - [`preflight.py`](preflight.py) verifies every volatile dependency against
   GitHub and Merge Gateway. It also checks that the CLI implementation still
   contains the behavior while the target docs still omit it. If OpenCode closes

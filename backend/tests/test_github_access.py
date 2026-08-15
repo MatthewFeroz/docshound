@@ -1,6 +1,6 @@
 import unittest
 
-import httpx
+import httpx2 as httpx
 
 from app.tools.github import GitHubToolError, validate_github_access
 

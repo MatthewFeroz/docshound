@@ -6,7 +6,6 @@ from app.langgraph_agent import research
 from app.state import DocumentationSource, GapCluster, Issue, PullRequest
 from app.tools.cluster import _validate_cluster_sources
 
-
 NOW = datetime(2026, 8, 14, tzinfo=timezone.utc)
 
 
@@ -42,9 +41,7 @@ class MultiRepositoryActivityTests(unittest.IsolatedAsyncioTestCase):
         async def issues(repo: str, _limit: int):
             return [_issue(repo, 7)]
 
-        async def pull_requests(
-            repo: str, _limit: int, include_open: bool = False
-        ):
+        async def pull_requests(repo: str, _limit: int, include_open: bool = False):
             pull_request = _pull_request(repo, 9)
             if include_open:
                 pull_request = pull_request.model_copy(
@@ -70,7 +67,9 @@ class MultiRepositoryActivityTests(unittest.IsolatedAsyncioTestCase):
             "errors": [],
         }
         with (
-            patch("app.langgraph_agent.research_repo", new=AsyncMock(side_effect=issues)),
+            patch(
+                "app.langgraph_agent.research_repo", new=AsyncMock(side_effect=issues)
+            ),
             patch(
                 "app.langgraph_agent.research_pull_requests",
                 new=AsyncMock(side_effect=pull_requests),

@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parent.parent
 SCENARIO_DIRECTORY = ROOT / "demo" / "scenarios"
 sys.path.insert(0, str(ROOT / "backend"))
@@ -133,8 +132,12 @@ def _load_environment() -> tuple[dict[str, str], list[Path]]:
 
 
 def _load_scenario(name: str) -> dict[str, Any]:
-    if not name or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for character in name):
-        raise RuntimeError("Scenario names may contain lowercase letters, numbers, _ and -")
+    if not name or any(
+        character not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for character in name
+    ):
+        raise RuntimeError(
+            "Scenario names may contain lowercase letters, numbers, _ and -"
+        )
     path = SCENARIO_DIRECTORY / f"{name}.json"
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -142,7 +145,14 @@ def _load_scenario(name: str) -> dict[str, Any]:
         raise RuntimeError(f"Scenario not found: {path}") from exc
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"Invalid scenario JSON at {path}: {exc}") from exc
-    required = ("title", "source_repository", "publish_repository", "issues", "pull_requests", "documentation")
+    required = (
+        "title",
+        "source_repository",
+        "publish_repository",
+        "issues",
+        "pull_requests",
+        "documentation",
+    )
     missing = [key for key in required if key not in payload]
     if missing:
         raise RuntimeError(f"Scenario is missing: {', '.join(missing)}")
@@ -156,7 +166,9 @@ def _repo_path(repository: str) -> str:
 
 
 def _contents_path(repository: str, path: str) -> str:
-    return f"/repos/{_repo_path(repository)}/contents/{urllib.parse.quote(path, safe='/')}"
+    return (
+        f"/repos/{_repo_path(repository)}/contents/{urllib.parse.quote(path, safe='/')}"
+    )
 
 
 def check_toolchain(report: Report, *, require_free_app_ports: bool) -> None:
@@ -170,7 +182,9 @@ def check_toolchain(report: Report, *, require_free_app_ports: bool) -> None:
     if ffmpeg:
         report.pass_("tool:ffmpeg", ffmpeg)
     else:
-        report.warn("tool:ffmpeg", "Not required by DocsHound, but unavailable for recording.")
+        report.warn(
+            "tool:ffmpeg", "Not required by DocsHound, but unavailable for recording."
+        )
     if (ROOT / "frontend" / "node_modules").is_dir():
         report.pass_("frontend dependencies", "frontend/node_modules is installed")
     else:
@@ -219,7 +233,9 @@ def check_github(
         publish_payload = github.get(f"/repos/{_repo_path(publish)}")
         permissions = publish_payload.get("permissions") or {}
         if permissions.get("push"):
-            report.pass_("publish access", f"{publish} allows branch and content writes")
+            report.pass_(
+                "publish access", f"{publish} allows branch and content writes"
+            )
         else:
             report.fail(
                 "publish access",
@@ -253,24 +269,35 @@ def check_github(
                 f"Upstream moved from {researched_sha[:10]} to {source_sha[:10]}; "
                 "the source-level checks below still decide readiness.",
             )
-        if source_sha == publish_sha:
-            report.pass_("fork synchronization", f"{publish_ref} matches upstream {source_ref}")
-        else:
-            comparison = github.get(
-                f"/repos/{_repo_path(source)}/compare/{publish_sha}...{source_sha}"
+        pinned_publish_sha = str(scenario.get("publish_base_commit") or "")
+        if pinned_publish_sha and publish_sha == pinned_publish_sha:
+            report.pass_(
+                "fork snapshot",
+                f"{publish_ref} intentionally pinned at {publish_sha[:10]}",
             )
-            ahead = int(comparison.get("ahead_by") or 0)
-            behind = int(comparison.get("behind_by") or 0)
+        elif pinned_publish_sha:
+            report.fail(
+                "fork snapshot",
+                f"Expected {publish_ref} at {pinned_publish_sha[:10]}, "
+                f"but it moved to {publish_sha[:10]}.",
+            )
+        elif source_sha == publish_sha:
+            report.pass_(
+                "fork synchronization", f"{publish_ref} matches upstream {source_ref}"
+            )
+        else:
             report.warn(
                 "fork synchronization",
-                f"Upstream is {ahead} commits ahead and {behind} behind the fork; sync before rehearsal if desired.",
+                "The fork differs from upstream and has no publish_base_commit pin.",
             )
 
         for reference in scenario["issues"]:
             number = int(reference["number"])
             issue = github.get(f"/repos/{_repo_path(source)}/issues/{number}")
             if issue.get("pull_request"):
-                report.fail(f"issue #{number}", "Manifest entry resolves to a pull request.")
+                report.fail(
+                    f"issue #{number}", "Manifest entry resolves to a pull request."
+                )
                 continue
             if issue.get("title") != reference["title"]:
                 report.fail(
@@ -279,7 +306,10 @@ def check_github(
                 )
                 continue
             required_state = str(reference.get("required_state") or "").lower()
-            if required_state and str(issue.get("state") or "").lower() != required_state:
+            if (
+                required_state
+                and str(issue.get("state") or "").lower() != required_state
+            ):
                 report.fail(
                     f"issue #{number}",
                     f"Expected {required_state}, now {issue.get('state')}.",
@@ -301,7 +331,9 @@ def check_github(
                 )
                 continue
             if not pull_request.get("merged_at"):
-                report.fail(f"pull request #{number}", "Pinned product PR is not merged.")
+                report.fail(
+                    f"pull request #{number}", "Pinned product PR is not merged."
+                )
                 continue
             report.pass_(
                 f"pull request #{number}",
@@ -361,7 +393,9 @@ def check_github(
             {"state": "open", "per_page": "100"},
         )
         demo_pull_requests = [
-            item for item in open_pull_requests if str((item.get("head") or {}).get("ref", "")).startswith("docshound/")
+            item
+            for item in open_pull_requests
+            if str((item.get("head") or {}).get("ref", "")).startswith("docshound/")
         ]
         if demo_pull_requests:
             numbers = ", ".join(f"#{item['number']}" for item in demo_pull_requests)
@@ -372,10 +406,18 @@ def check_github(
         else:
             report.pass_("existing demo PRs", "No open docshound/* pull requests")
 
-        if github.rate_limit_remaining is not None and github.rate_limit_remaining >= 100:
-            report.pass_("GitHub rate limit", f"{github.rate_limit_remaining} requests remaining")
+        if (
+            github.rate_limit_remaining is not None
+            and github.rate_limit_remaining >= 100
+        ):
+            report.pass_(
+                "GitHub rate limit", f"{github.rate_limit_remaining} requests remaining"
+            )
         elif github.rate_limit_remaining is not None:
-            report.warn("GitHub rate limit", f"Only {github.rate_limit_remaining} requests remaining")
+            report.warn(
+                "GitHub rate limit",
+                f"Only {github.rate_limit_remaining} requests remaining",
+            )
     except (KeyError, RuntimeError) as exc:
         report.fail("GitHub API", str(exc))
 
@@ -410,7 +452,8 @@ def check_model(
         report.warn("agent scenario probe", "Skipped by command-line option")
         return
     model = (scenario.get("model") or {}).get(
-        "primary", environment.get("MERGE_GATEWAY_PRIMARY_MODEL", "google/gemini-3.7-flash")
+        "primary",
+        environment.get("MERGE_GATEWAY_PRIMARY_MODEL", "google/gemini-3.7-flash"),
     )
     probe_environment = dict(environment)
     probe_environment["DOCSHOUND_DEMO_SCENARIO"] = scenario_name
@@ -551,24 +594,18 @@ def check_tracing(
     *,
     skip_collector_connect: bool,
 ) -> None:
-    sdk_disabled = (
-        environment.get("OTEL_SDK_DISABLED", "false").lower() == "true"
-    )
+    sdk_disabled = environment.get("OTEL_SDK_DISABLED", "false").lower() == "true"
     if sdk_disabled:
         report.fail(
             "OpenInference export",
             "OTEL_SDK_DISABLED is true; remove it or set it to false.",
         )
     if (
-        environment.get("LANGSMITH_API_KEY")
-        or environment.get("LANGCHAIN_API_KEY")
+        environment.get("LANGSMITH_API_KEY") or environment.get("LANGCHAIN_API_KEY")
     ) and not (
-        environment.get("LANGSMITH_PROJECT")
-        or environment.get("LANGCHAIN_PROJECT")
+        environment.get("LANGSMITH_PROJECT") or environment.get("LANGCHAIN_PROJECT")
     ):
-        environment.setdefault(
-            "LANGSMITH_PROJECT", f"docshound-{scenario_name}-demo"
-        )
+        environment.setdefault("LANGSMITH_PROJECT", f"docshound-{scenario_name}-demo")
     config = resolve_trace_export_config(environment)
     if config is None and not sdk_disabled:
         report.fail(
@@ -671,7 +708,9 @@ def check_tracing(
         check=False,
     )
     if completed.returncode == 0:
-        report.pass_("trace self-test", "OpenInference schema, hierarchy, and source refs passed")
+        report.pass_(
+            "trace self-test", "OpenInference schema, hierarchy, and source refs passed"
+        )
     else:
         detail = (completed.stderr or completed.stdout).strip().splitlines()[-1]
         report.fail("trace self-test", detail)
@@ -728,7 +767,9 @@ def main() -> int:
             ", ".join(str(path.relative_to(ROOT)) for path in loaded_files),
         )
     else:
-        report.warn("environment", "No .env files found; using process environment only")
+        report.warn(
+            "environment", "No .env files found; using process environment only"
+        )
 
     check_toolchain(
         report,

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2 as httpx
 
 from app.langgraph_agent import _safe_next_action, llm_decide
 from app.state import (
@@ -48,9 +48,7 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
                 requested_paths.append(path)
                 return httpx.Response(
                     200,
-                    json={
-                        "content": base64.b64encode(pages[path].encode()).decode()
-                    },
+                    json={"content": base64.b64encode(pages[path].encode()).decode()},
                 )
             return httpx.Response(404, json={"message": "not found"})
 
@@ -114,9 +112,7 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
                 path = request.url.path.removeprefix(prefix)
                 return httpx.Response(
                     200,
-                    json={
-                        "content": base64.b64encode(pages[path].encode()).decode()
-                    },
+                    json={"content": base64.b64encode(pages[path].encode()).decode()},
                 )
             return httpx.Response(404, json={"message": "not found"})
 
@@ -176,9 +172,12 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
             confidence=0.8,
         )
 
-        clusters, requested_paths, _sources, _inspected_count = await self._search_pages(
-            pages, cluster
-        )
+        (
+            clusters,
+            requested_paths,
+            _sources,
+            _inspected_count,
+        ) = await self._search_pages(pages, cluster)
 
         coverage = clusters[0].documentation_coverage
         self.assertIsNotNone(coverage)
@@ -216,9 +215,12 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
             confidence=0.8,
         )
 
-        clusters, requested_paths, _sources, _inspected_count = await self._search_pages(
-            pages, cluster
-        )
+        (
+            clusters,
+            requested_paths,
+            _sources,
+            _inspected_count,
+        ) = await self._search_pages(pages, cluster)
 
         coverage = clusters[0].documentation_coverage
         self.assertIsNotNone(coverage)
@@ -288,7 +290,12 @@ class DocumentationSearchTests(unittest.IsolatedAsyncioTestCase):
             page_count=30,
         )
 
-        _clusters, requested_paths, _sources, inspected_count = await self._search_pages(
+        (
+            _clusters,
+            requested_paths,
+            _sources,
+            inspected_count,
+        ) = await self._search_pages(
             pages,
             cluster,
             authenticated=True,

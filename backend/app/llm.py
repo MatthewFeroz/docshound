@@ -10,7 +10,6 @@ from opentelemetry import trace
 from app.config import Settings, get_settings
 from app.runtime_credentials import get_merge_gateway_api_key
 
-
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")

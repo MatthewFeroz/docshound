@@ -8,7 +8,6 @@ from app.demo_scenarios import pinned_issue_relationships
 from app.llm import complete_json, llm_is_configured, require_json_array
 from app.state import GapCluster, Issue, PullRequest
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -143,9 +142,7 @@ async def _cluster_with_llm(
             "body": (pull_request.body or "")[:1800],
             "labels": pull_request.labels,
             "merged_at": (
-                pull_request.merged_at.isoformat()
-                if pull_request.merged_at
-                else None
+                pull_request.merged_at.isoformat() if pull_request.merged_at else None
             ),
             "state": pull_request.state,
         }
@@ -232,7 +229,9 @@ def _cluster_heuristically(
             buckets["general questions"].append(issue)
 
     clusters: list[GapCluster] = []
-    for name, bucket in sorted(buckets.items(), key=lambda item: len(item[1]), reverse=True):
+    for name, bucket in sorted(
+        buckets.items(), key=lambda item: len(item[1]), reverse=True
+    ):
         if len(bucket) < 2:
             continue
         issue_numbers = [issue.number for issue in bucket[:10]]
@@ -363,8 +362,7 @@ def _validate_cluster_sources(
             if not related_pull_requests:
                 continue
             cluster.pr_refs = [
-                _source_ref(pull_request)
-                for pull_request in related_pull_requests
+                _source_ref(pull_request) for pull_request in related_pull_requests
             ]
             cluster.pr_numbers = [
                 pull_request.number for pull_request in related_pull_requests
@@ -442,9 +440,7 @@ def _related_pull_requests(
         ]
     numbers = set(cluster.pr_numbers)
     return [
-        pull_request
-        for pull_request in pull_requests
-        if pull_request.number in numbers
+        pull_request for pull_request in pull_requests if pull_request.number in numbers
     ]
 
 
@@ -502,7 +498,7 @@ def _ensure_shipped_change(
         draft_title=title,
         draft_summary=_pull_request_summary(primary),
     )
-    return ([shipped] + clusters)[:8]
+    return [shipped, *clusters][:8]
 
 
 def _ensure_demo_source_coverage(
@@ -522,9 +518,7 @@ def _ensure_demo_source_coverage(
     issue_by_number = {issue.number: issue for issue in issues}
     pull_request_numbers = {pull_request.number for pull_request in pull_requests}
     covered_issue_refs = {
-        reference
-        for cluster in clusters
-        for reference in cluster.issue_refs
+        reference for cluster in clusters for reference in cluster.issue_refs
     }
     findings = list(clusters)
     for number, related_pull_requests in relationships.items():
@@ -685,9 +679,7 @@ async def _draft_with_llm(
                         "title": pull_request.title,
                         "body": (pull_request.body or "")[:2400],
                     }
-                    for pull_request in _related_pull_requests(
-                        cluster, pull_requests
-                    )
+                    for pull_request in _related_pull_requests(cluster, pull_requests)
                 ],
             }
         )
@@ -749,10 +741,10 @@ def attach_review_drafts(
         if cluster.review_status == "no_change_needed":
             continue
         related = _related_issues(cluster, issues)
-        related_pull_requests = _related_pull_requests(
-            cluster, pull_requests or []
-        )
-        title = (cluster.draft_title or cluster.recurring_question or cluster.name).strip()
+        related_pull_requests = _related_pull_requests(cluster, pull_requests or [])
+        title = (
+            cluster.draft_title or cluster.recurring_question or cluster.name
+        ).strip()
         cluster.draft_title = title[:110]
         cluster.draft_summary = cluster.draft_summary or cluster.summary
 
@@ -799,14 +791,20 @@ def _fallback_review_markdown(
                 f"{pull_request.title}\n\n{excerpt}"
             )
     if not evidence_markdown:
-        evidence_markdown = "The linked issues do not include enough description to quote."
+        evidence_markdown = (
+            "The linked issues do not include enough description to quote."
+        )
 
     resolution = _resolution_from_pull_requests(related_pull_requests)
-    resolution = resolution or _resolution_from_issues(related) or (
-        "The source issues do not establish a confirmed resolution. Before publishing,\n"
-        "verify the expected behavior with the maintainers and replace this note with the\n"
-        "supported fix or workaround. The final documentation should directly answer the\n"
-        "question above and include a working example derived from the verified behavior."
+    resolution = (
+        resolution
+        or _resolution_from_issues(related)
+        or (
+            "The source issues do not establish a confirmed resolution. Before publishing,\n"
+            "verify the expected behavior with the maintainers and replace this note with the\n"
+            "supported fix or workaround. The final documentation should directly answer the\n"
+            "question above and include a working example derived from the verified behavior."
+        )
     )
 
     return f"""# {cluster.draft_title}
@@ -936,7 +934,7 @@ def _replace_resolution_section(markdown: str, resolution: str) -> str:
         if re.match(r"^##\s+", lines[index]):
             end = index
             break
-    replacement = lines[: start + 1] + ["", resolution, ""] + lines[end:]
+    replacement = [*lines[: start + 1], "", resolution, "", *lines[end:]]
     return "\n".join(replacement).strip()
 
 

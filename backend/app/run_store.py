@@ -1,7 +1,9 @@
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from app.database import DB_PATH
+from app.database import DB_PATH, database_connection
 from app.state import AgentState
 
 
@@ -46,20 +48,22 @@ def load_runs(limit: int = 50) -> list[AgentState]:
     return [AgentState.model_validate_json(row["state_json"]) for row in rows]
 
 
-def _connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(DB_PATH, timeout=10)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS runs (
-            run_id TEXT PRIMARY KEY,
-            repo TEXT NOT NULL,
-            status TEXT NOT NULL,
-            state_json TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+@contextmanager
+def _connect() -> Iterator[sqlite3.Connection]:
+    with database_connection(
+        DB_PATH,
+        timeout=10,
+        write_ahead_log=True,
+    ) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS runs (
+                run_id TEXT PRIMARY KEY,
+                repo TEXT NOT NULL,
+                status TEXT NOT NULL,
+                state_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
         )
-        """
-    )
-    return connection
+        yield connection

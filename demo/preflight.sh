@@ -3,13 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-PYTHON_BIN="${ROOT}/.venv/bin/python"
-if [[ ! -x "${PYTHON_BIN}" ]]; then
-  PYTHON_BIN="${ROOT}/backend/.venv/bin/python"
-fi
-if [[ ! -x "${PYTHON_BIN}" ]]; then
-  echo "DocsHound's Python environment is missing. Follow the backend setup in README.md." >&2
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv is required. Install it from https://docs.astral.sh/uv/." >&2
   exit 1
 fi
 
-exec "${PYTHON_BIN}" "${ROOT}/demo/preflight.py" "$@"
+exec uv run --project "${ROOT}/backend" --locked python "${ROOT}/demo/preflight.py" "$@"

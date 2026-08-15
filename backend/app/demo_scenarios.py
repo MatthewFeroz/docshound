@@ -7,9 +7,9 @@ from typing import Any
 
 from app.config import get_settings
 
-
 _SCENARIO_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _SCENARIO_DIRECTORY = Path(__file__).resolve().parents[2] / "demo" / "scenarios"
 
 
@@ -27,6 +27,8 @@ class DemoScenario:
     title: str
     source_repository: str
     publish_repository: str
+    researched_source_commit: str
+    publish_base_commit: str
     issues: tuple[PinnedReference, ...]
     pull_requests: tuple[PinnedReference, ...]
     include_recent_activity: bool
@@ -121,6 +123,16 @@ def load_demo_scenario(name: str) -> DemoScenario:
         title=_required_text(payload, "title", path),
         source_repository=source_repository,
         publish_repository=publish_repository,
+        researched_source_commit=_required_commit(
+            payload,
+            "researched_source_commit",
+            path,
+        ),
+        publish_base_commit=_required_commit(
+            payload,
+            "publish_base_commit",
+            path,
+        ),
         issues=issues,
         pull_requests=pull_requests,
         include_recent_activity=_optional_bool(
@@ -134,12 +146,17 @@ def load_demo_scenario(name: str) -> DemoScenario:
     )
 
 
-def _required_repository(
-    payload: dict[str, Any], key: str, path: Path
-) -> str:
+def _required_repository(payload: dict[str, Any], key: str, path: Path) -> str:
     value = _required_text(payload, key, path)
     if not _REPOSITORY.fullmatch(value):
         raise RuntimeError(f"{path}: {key} must use the owner/repository format")
+    return value
+
+
+def _required_commit(payload: dict[str, Any], key: str, path: Path) -> str:
+    value = _required_text(payload, key, path).lower()
+    if not _COMMIT_SHA.fullmatch(value):
+        raise RuntimeError(f"{path}: {key} must be a full Git commit SHA")
     return value
 
 

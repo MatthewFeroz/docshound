@@ -92,9 +92,7 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
         DocSource.model_validate(source) for source in result.get("docs_sources", [])
     ]
     state.docs_candidates_inspected = result.get("docs_candidates_inspected", 0)
-    state.documentation_issues_scraped = result.get(
-        "documentation_issues_scraped", 0
-    )
+    state.documentation_issues_scraped = result.get("documentation_issues_scraped", 0)
     state.documentation_pull_requests_scraped = result.get(
         "documentation_pull_requests_scraped", 0
     )

@@ -1,7 +1,7 @@
 from datetime import datetime
 from urllib.parse import quote
 
-import httpx
+import httpx2 as httpx
 
 from app.config import get_settings
 from app.demo_scenarios import (
@@ -201,7 +201,9 @@ async def research_pull_requests(
             )
             items = _github_payload(response, repo)
             if not isinstance(items, list):
-                raise GitHubToolError("GitHub returned an invalid pull-request response.")
+                raise GitHubToolError(
+                    "GitHub returned an invalid pull-request response."
+                )
             if not items:
                 break
             for item in items:

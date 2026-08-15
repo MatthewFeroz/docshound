@@ -282,12 +282,8 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["selected_source"]["repo"], "acme/docs")
-        self.assertEqual(
-            response.json()["selected_source"]["root"], "content/en/docs"
-        )
-        self.assertEqual(
-            response.json()["documentation_activity_repos"], ["acme/docs"]
-        )
+        self.assertEqual(response.json()["selected_source"]["root"], "content/en/docs")
+        self.assertEqual(response.json()["documentation_activity_repos"], ["acme/docs"])
 
     def test_run_accepts_confirmed_documentation_source(self) -> None:
         source = DocumentationSource(
@@ -337,9 +333,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(document["title"], "Configure retries")
         self.assertEqual(document["source_issues"][0]["number"], 12)
         self.assertEqual(approval.json()["suggested_action"], "update_page")
-        self.assertEqual(
-            approval.json()["suggested_file_path"], "docs/reliability.md"
-        )
+        self.assertEqual(approval.json()["suggested_file_path"], "docs/reliability.md")
 
         fetched = self.client.get(f"/api/v1/documents/{document['slug']}")
         self.assertEqual(fetched.status_code, 200)
