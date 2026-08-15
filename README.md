@@ -76,7 +76,7 @@ bun run --cwd frontend dev
 ## OpenCode stage demo
 
 The repeatable stage setup, pinned live GitHub sources, read-only preflight, and
-local OpenInference trace viewer live in [`demo/`](demo/README.md). Start the
+LangSmith trace configuration live in [`demo/`](demo/README.md). Start the
 complete demo environment with:
 
 ```bash
@@ -96,6 +96,8 @@ MERGE_GATEWAY_PRIMARY_MODEL=google/gemini-3.7-flash
 MERGE_GATEWAY_FALLBACK_MODEL=openai/gpt-5.6-luna
 OPENAI_API_KEY=        # optional legacy direct-provider fallback
 OPENAI_MODEL=gpt-4o-mini
+LANGSMITH_API_KEY=     # default OTLP trace destination
+LANGSMITH_PROJECT=docshound
 ALLOWED_ORIGINS=http://localhost:5173
 DOCSHOUND_DB_PATH=     # optional: explicit shared SQLite path
 ```
@@ -136,25 +138,33 @@ server's secret manager.
 
 ### OpenTelemetry and OpenInference tracing
 
-DocsHound can export traces to any OTLP/HTTP-compatible collector. Each run is
-an OpenInference `AGENT` span, repository operations are `TOOL` spans, and the
-LangChain, LangGraph, and OpenAI-compatible Gateway calls beneath them are
-instrumented automatically. Model spans include the requested provider/model,
-the model returned by Gateway, and whether DocsHound used its fallback route.
+DocsHound produces one vendor-neutral OpenTelemetry trace stream enriched with
+OpenInference semantics. Each run is an OpenInference `AGENT` span, repository
+operations are `TOOL` spans, and the LangChain, LangGraph, and OpenAI-compatible
+Gateway calls beneath them are instrumented automatically. Model spans include
+the requested provider/model, the model returned by Gateway, and whether
+DocsHound used its fallback route.
 
-Set a collector base URL to enable tracing:
+Set a LangSmith API key to use LangSmith as the default OTLP destination:
 
 ```text
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+LANGSMITH_API_KEY=lsv2_...
+LANGSMITH_PROJECT=docshound
 OTEL_SERVICE_NAME=docshound
 ```
 
-Standard options including `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`,
+The LangSmith SDK's native tracing switch is intentionally unnecessary: spans
+go directly to LangSmith's OTLP endpoint, avoiding a duplicate trace tree.
+Explicit `OTEL_EXPORTER_OTLP_ENDPOINT` or
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` configuration takes precedence, making it
+possible to route the same spans to an OpenTelemetry Collector or a future
+Google exporter without changing agent code. Standard options including
 `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_RESOURCE_ATTRIBUTES`, and
 `OTEL_SDK_DISABLED` are supported. Set `OPENINFERENCE_HIDE_INPUTS=true` and/or
 `OPENINFERENCE_HIDE_OUTPUTS=true` when model content must not be captured by
-automatic instrumentation. DocsHound's custom spans record repository identity
-and result counts, not issue, pull-request, or document bodies.
+automatic instrumentation. DocsHound's custom spans record repository identity,
+the selected documentation repository and root, source references, and result
+summaries—not credentials or issue, pull-request, and document bodies.
 
 ## Docker
 

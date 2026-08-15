@@ -5,15 +5,15 @@ from unittest.mock import patch
 from app.state import GapCluster, Issue, PullRequest
 from app.tools.cluster import (
     _ensure_demo_source_coverage,
-    _trace_analysis_inputs,
-    _trace_cluster_outputs,
+    summarize_analysis_inputs,
+    summarize_cluster_outputs,
 )
 
 
 class ClusterTracingTests(unittest.TestCase):
     def test_trace_inputs_include_identifiers_but_not_source_bodies(self) -> None:
         now = datetime.now(timezone.utc)
-        inputs = _trace_analysis_inputs(
+        inputs = summarize_analysis_inputs(
             {
                 "issues": [
                     Issue(
@@ -53,7 +53,7 @@ class ClusterTracingTests(unittest.TestCase):
         self.assertNotIn("sensitive", str(inputs).lower())
 
     def test_trace_outputs_explain_which_sources_formed_each_cluster(self) -> None:
-        outputs = _trace_cluster_outputs(
+        outputs = summarize_cluster_outputs(
             [
                 GapCluster(
                     name="Authentication documentation gap",

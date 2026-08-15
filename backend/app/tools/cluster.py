@@ -4,8 +4,6 @@ import re
 from collections import defaultdict
 from urllib.parse import urlparse
 
-from langsmith import traceable
-
 from app.demo_scenarios import pinned_issue_relationships
 from app.llm import complete_json, llm_is_configured, require_json_array
 from app.state import GapCluster, Issue, PullRequest
@@ -24,7 +22,7 @@ KEYWORDS = {
 }
 
 
-def _trace_analysis_inputs(inputs: dict) -> dict:
+def summarize_analysis_inputs(inputs: dict) -> dict:
     """Keep analysis spans useful without copying issue and PR bodies."""
     issues = inputs.get("issues") or []
     pull_requests = inputs.get("pull_requests") or []
@@ -50,7 +48,7 @@ def _trace_analysis_inputs(inputs: dict) -> dict:
     }
 
 
-def _trace_cluster_outputs(clusters: list[GapCluster]) -> dict:
+def summarize_cluster_outputs(clusters: list[GapCluster]) -> dict:
     return {
         "cluster_count": len(clusters),
         "clusters": [
@@ -67,12 +65,6 @@ def _trace_cluster_outputs(clusters: list[GapCluster]) -> dict:
     }
 
 
-@traceable(
-    name="analyze.cluster_issues",
-    run_type="chain",
-    process_inputs=_trace_analysis_inputs,
-    process_outputs=_trace_cluster_outputs,
-)
 async def cluster_issues(
     issues: list[Issue],
     pull_requests: list[PullRequest] | None = None,
@@ -113,12 +105,6 @@ async def cluster_issues(
     )
 
 
-@traceable(
-    name="analyze.llm_cluster",
-    run_type="llm",
-    process_inputs=_trace_analysis_inputs,
-    process_outputs=_trace_cluster_outputs,
-)
 async def _cluster_with_llm(
     issues: list[Issue],
     pull_requests: list[PullRequest],
@@ -316,12 +302,6 @@ def _cluster_heuristically(
     return clusters[:8]
 
 
-@traceable(
-    name="analyze.validate_sources",
-    run_type="chain",
-    process_inputs=_trace_analysis_inputs,
-    process_outputs=_trace_cluster_outputs,
-)
 def _validate_cluster_sources(
     clusters: list[GapCluster],
     issues: list[Issue],
@@ -487,12 +467,6 @@ def _pull_request_summary(pull_request: PullRequest) -> str:
     return f"Merged pull request #{pull_request.number} shipped this change."
 
 
-@traceable(
-    name="analyze.ensure_shipped_change",
-    run_type="chain",
-    process_inputs=_trace_analysis_inputs,
-    process_outputs=_trace_cluster_outputs,
-)
 def _ensure_shipped_change(
     clusters: list[GapCluster],
     pull_requests: list[PullRequest],
@@ -645,12 +619,6 @@ def _support_gap_candidates(issues: list[Issue]) -> list[Issue]:
     return candidates
 
 
-@traceable(
-    name="draft.create_review_documents",
-    run_type="chain",
-    process_inputs=_trace_analysis_inputs,
-    process_outputs=_trace_cluster_outputs,
-)
 async def draft_review_documents(
     clusters: list[GapCluster],
     issues: list[Issue],
@@ -681,12 +649,6 @@ async def draft_review_documents(
     return attach_review_drafts(clusters, issues, pull_requests)
 
 
-@traceable(
-    name="draft.llm_review_documents",
-    run_type="llm",
-    process_inputs=_trace_analysis_inputs,
-    process_outputs=_trace_cluster_outputs,
-)
 async def _draft_with_llm(
     clusters: list[GapCluster],
     issues: list[Issue],
@@ -778,12 +740,6 @@ def _validate_draft_item(item: object) -> None:
             raise ValueError(f"Every draft must contain a string {field}")
 
 
-@traceable(
-    name="analyze.attach_review_drafts",
-    run_type="chain",
-    process_inputs=_trace_analysis_inputs,
-    process_outputs=_trace_cluster_outputs,
-)
 def attach_review_drafts(
     clusters: list[GapCluster],
     issues: list[Issue],
