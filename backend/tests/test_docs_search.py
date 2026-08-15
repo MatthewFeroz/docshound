@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2 as httpx
 
 from app.langgraph_agent import _safe_next_action, llm_decide
 from app.state import (

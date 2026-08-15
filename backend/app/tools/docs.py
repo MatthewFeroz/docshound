@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from urllib.parse import quote, urlparse
 
-import httpx
+import httpx2 as httpx
 
 from app.config import get_settings
 from app.demo_scenarios import documentation_target_path

@@ -1,7 +1,7 @@
 from datetime import datetime
 from urllib.parse import quote
 
-import httpx
+import httpx2 as httpx
 
 from app.config import get_settings
 from app.demo_scenarios import (

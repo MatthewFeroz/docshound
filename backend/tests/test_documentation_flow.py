@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-import httpx
+import httpx2 as httpx
 
 from app import documentation_prs, run_store
 from app.approved_documents import ApprovedDocument

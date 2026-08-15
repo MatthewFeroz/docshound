@@ -18,9 +18,9 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-VENV_BIN="${ROOT}/.venv/bin"
-if [[ ! -x "${VENV_BIN}/uvicorn" && -x "${ROOT}/../.venv/bin/uvicorn" ]]; then
-  VENV_BIN="${ROOT}/../.venv/bin"
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv is required. Install it from https://docs.astral.sh/uv/." >&2
+  exit 1
 fi
 
-exec "${VENV_BIN}/uvicorn" app.main:app --reload --host 127.0.0.1 --port 8000
+exec uv run --locked uvicorn app.main:app --reload --host 127.0.0.1 --port 8000

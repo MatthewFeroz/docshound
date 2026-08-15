@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2 as httpx
 
 from app.source_resolver import resolve_documentation_sources
 

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
-import httpx
+import httpx2 as httpx
 
 from app.approved_documents import ApprovedDocument, document_body_markdown
 from app.database import DB_PATH

@@ -37,17 +37,20 @@ Documentation pull request
 
 ## Run locally
 
-Requires Python 3.11+ and Bun 1.3+.
+Requires Python 3.14, uv 0.12+, and Bun 1.3+.
 
 Set up the backend:
 
 ```bash
 cd backend
-python3.11 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+uv sync --locked
 cp .env.example .env
 cd ..
 ```
+
+Backend dependencies are declared in `backend/pyproject.toml` and reproducibly
+resolved by `backend/uv.lock`. Refresh them deliberately with
+`cd backend && uv lock --upgrade && uv sync`.
 
 Set up the frontend:
 
@@ -238,7 +241,7 @@ Run backend tests:
 
 ```bash
 cd backend
-.venv/bin/python -m unittest discover -s tests -v
+uv run --locked python -m unittest discover -s tests -v
 ```
 
 Run frontend checks:

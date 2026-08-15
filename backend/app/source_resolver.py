@@ -9,7 +9,7 @@ from html import unescape
 from pathlib import PurePosixPath
 from urllib.parse import quote, unquote, urljoin, urlparse
 
-import httpx
+import httpx2 as httpx
 
 from app.runtime_credentials import get_github_api_token
 from app.config import get_settings

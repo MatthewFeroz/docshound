@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import httpx
+import httpx2 as httpx
 
 from app.demo_scenarios import (
     documentation_target_path,
