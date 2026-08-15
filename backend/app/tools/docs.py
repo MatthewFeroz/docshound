@@ -14,13 +14,12 @@ from app.demo_scenarios import documentation_target_path
 from app.llm import complete_json, llm_is_configured, require_json_array
 from app.runtime_credentials import get_github_api_token
 from app.state import (
-    DocumentationSource,
     DocSource,
     DocumentationCoverage,
+    DocumentationSource,
     GapCluster,
     PullRequest,
 )
-
 
 GITHUB_API = "https://api.github.com"
 DOC_EXTENSIONS = {".md", ".mdx"}
@@ -191,7 +190,11 @@ async def search_official_docs(
             if target_document:
                 ranked = [
                     target_document,
-                    *(document for document in ranked if document.path != demo_target_path),
+                    *(
+                        document
+                        for document in ranked
+                        if document.path != demo_target_path
+                    ),
                 ]
         ranked = ranked[:document_limit]
         ranked_documents.append(ranked)
@@ -212,8 +215,7 @@ async def search_official_docs(
             and pull_request.source_repo
             and documentation_source
             and documentation_source.repo
-            and pull_request.source_repo.lower()
-            == documentation_source.repo.lower()
+            and pull_request.source_repo.lower() == documentation_source.repo.lower()
             and f"{pull_request.source_repo}#{pull_request.number}"
             in set(cluster.pr_refs)
         ]
@@ -222,9 +224,9 @@ async def search_official_docs(
                 DocSource(
                     title=f"Open documentation PR #{pull_request.number}: {pull_request.title}",
                     url=str(pull_request.url),
-                    snippet=(pull_request.body or "Documentation update is in progress.")[
-                        :900
-                    ],
+                    snippet=(
+                        pull_request.body or "Documentation update is in progress."
+                    )[:900],
                     source_type="documentation_pull_request",
                     confidence=0.95,
                 )
@@ -257,9 +259,7 @@ async def search_official_docs(
                     if source.repository_path in relevant_paths
                 ] or relevant_sources
             recommended_path = assessment.get("recommended_path")
-            available_paths = {
-                document.path for document in ranked_documents[index]
-            }
+            available_paths = {document.path for document in ranked_documents[index]}
             status = assessment.get("status")
             if status == "documented":
                 assessment["recommended_action"] = "no_change"
@@ -447,7 +447,11 @@ async def _load_relevant_repository_documents(
                 )[:paths_per_finding]:
                     if path not in ranked_paths:
                         ranked_paths.append(path)
-            if not source_root and "README.md" in paths and "README.md" not in ranked_paths:
+            if (
+                not source_root
+                and "README.md" in paths
+                and "README.md" not in ranked_paths
+            ):
                 ranked_paths.append("README.md")
 
         fetch_limit = FULL_CORPUS_PAGE_LIMIT if full_corpus else document_fetch_limit
@@ -465,7 +469,7 @@ async def _load_relevant_repository_documents(
                 return None
             try:
                 content = base64.b64decode(encoded).decode("utf-8")
-            except (ValueError, UnicodeDecodeError):
+            except ValueError, UnicodeDecodeError:
                 return None
             return RepositoryDocument(
                 path=path,
@@ -584,7 +588,9 @@ def _rank_documents(
         content_terms = set(_tokens(searchable))
         overlap = terms & content_terms
         phrase_bonus = sum(
-            1.0 for term in terms if re.search(rf"\b{re.escape(term)}\b", searchable, re.I)
+            1.0
+            for term in terms
+            if re.search(rf"\b{re.escape(term)}\b", searchable, re.I)
         )
         return _path_score(cluster, document.path) + len(overlap) * 2.0 + phrase_bonus
 
@@ -634,9 +640,7 @@ def _document_source(
 def _relevant_excerpt(content: str, terms: set[str], limit: int = 900) -> str:
     compact = " ".join(content.split())
     positions = [
-        compact.lower().find(term)
-        for term in terms
-        if compact.lower().find(term) >= 0
+        compact.lower().find(term) for term in terms if compact.lower().find(term) >= 0
     ]
     start = max(0, min(positions) - 180) if positions else 0
     excerpt = compact[start : start + limit]

@@ -14,7 +14,6 @@ from app.demo_scenarios import (
 )
 from app.tools.github import research_pull_requests, research_repo
 
-
 NOW = "2026-08-15T12:00:00Z"
 
 
@@ -52,6 +51,14 @@ class DemoScenarioTests(unittest.TestCase):
 
         self.assertEqual(scenario.source_repository, "anomalyco/opencode")
         self.assertEqual(scenario.publish_repository, "MatthewFeroz/opencode")
+        self.assertEqual(
+            scenario.researched_source_commit,
+            "4643e65ad6334de3e4e68dedc201d5fbb828c9fe",
+        )
+        self.assertEqual(
+            scenario.publish_base_commit,
+            "d4704347465c1ee63d0c213ed00e648e7f0231c5",
+        )
         self.assertEqual(
             tuple(reference.number for reference in scenario.issues),
             (42484, 41537),

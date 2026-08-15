@@ -98,9 +98,7 @@ The upstream repository is public, active, uses `dev` as its default branch, and
 
 The intended destination exists: [`MatthewFeroz/opencode`](https://github.com/MatthewFeroz/opencode) is a public fork of `anomalyco/opencode`, uses `dev` as its default branch, and has Issues disabled ([GitHub repository API](https://api.github.com/repos/MatthewFeroz/opencode)). Issues being disabled on the fork is not a problem as long as DocsHound reads activity from `anomalyco/opencode` and publishes the documentation branch to `MatthewFeroz/opencode`.
 
-The authenticated GitHub account used for this read-only audit reported push/admin access to the fork. Both the MCP implementation and the documentation omissions are also present at the fork's audited `dev` commit `d4704347465c1ee63d0c213ed00e648e7f0231c5`, so the proposed demo can produce a valid fork-local PR even before syncing.
-
-However, at the time of the audit, upstream `dev` was at `4643e65ad6334de3e4e68dedc201d5fbb828c9fe` while the fork's `dev` was at `d4704347465c1ee63d0c213ed00e648e7f0231c5`. A SHA-to-SHA comparison reported the upstream head 41 commits ahead of the fork ([GitHub compare API](https://api.github.com/repos/anomalyco/opencode/compare/d4704347465c1ee63d0c213ed00e648e7f0231c5...4643e65ad6334de3e4e68dedc201d5fbb828c9fe)). The demo preflight should warn on drift and recommend syncing the fork before rehearsal; it should not silently mutate the fork.
+The authenticated GitHub account used for this read-only audit reported push/admin access to the fork. Both the MCP implementation and the documentation omissions are present at the fork's audited `dev` commit `d4704347465c1ee63d0c213ed00e648e7f0231c5`, so that commit is the intentional publish-base snapshot for the demo. The preflight should verify the fork remains at that exact commit; it should not warn that upstream is ahead or recommend syncing away the known documentation gaps.
 
 ## Determinism and caveats
 

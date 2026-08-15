@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from app import events
 from app.llm import complete_json, llm_is_configured
-from app.state import DocumentationSource, DocSource, GapCluster, Issue, PullRequest
+from app.state import DocumentationSource, GapCluster, Issue, PullRequest
 from app.tools.cluster import (
     cluster_issues,
     draft_review_documents,
@@ -149,7 +149,9 @@ def _safe_next_action(
         return "store"
     if not state.get("researched") and not state.get("errors"):
         return "research"
-    if (state.get("issues") or state.get("pull_requests")) and not state.get("analyzed"):
+    if (state.get("issues") or state.get("pull_requests")) and not state.get(
+        "analyzed"
+    ):
         return "analyze"
     if state.get("analyzed") and not state.get("docs_searched"):
         return "search_docs"
@@ -216,8 +218,7 @@ async def research(state: DocsHoundGraphState) -> DocsHoundGraphState:
             {"type": "issues_fetched", "count": len(issues)},
         )
         state["pull_requests"] = [
-            pull_request.model_dump(mode="json")
-            for pull_request in pull_requests
+            pull_request.model_dump(mode="json") for pull_request in pull_requests
         ]
         events.publish(
             state["run_id"],
@@ -265,9 +266,7 @@ async def research(state: DocsHoundGraphState) -> DocsHoundGraphState:
                     for pull_request in docs_pull_requests
                 )
                 state["documentation_issues_scraped"] = len(docs_issues)
-                state["documentation_pull_requests_scraped"] = len(
-                    docs_pull_requests
-                )
+                state["documentation_pull_requests_scraped"] = len(docs_pull_requests)
                 events.publish(
                     state["run_id"],
                     {
@@ -330,8 +329,7 @@ async def analyze(state: DocsHoundGraphState) -> DocsHoundGraphState:
 async def search_docs(state: DocsHoundGraphState) -> DocsHoundGraphState:
     try:
         clusters = [
-            GapCluster.model_validate(cluster)
-            for cluster in state.get("clusters", [])
+            GapCluster.model_validate(cluster) for cluster in state.get("clusters", [])
         ]
         documentation_source = (
             DocumentationSource.model_validate(state["documentation_source"])
@@ -364,9 +362,7 @@ async def search_docs(state: DocsHoundGraphState) -> DocsHoundGraphState:
             trace_input=trace_input,
         )
         source_dicts = [source.model_dump(mode="json") for source in sources]
-        state["clusters"] = [
-            cluster.model_dump(mode="json") for cluster in clusters
-        ]
+        state["clusters"] = [cluster.model_dump(mode="json") for cluster in clusters]
         state["docs_sources"] = source_dicts
         state["docs_candidates_inspected"] = inspected_count
         events.publish(
@@ -393,8 +389,7 @@ async def draft(state: DocsHoundGraphState) -> DocsHoundGraphState:
             for pull_request in state.get("pull_requests", [])
         ]
         clusters = [
-            GapCluster.model_validate(cluster)
-            for cluster in state.get("clusters", [])
+            GapCluster.model_validate(cluster) for cluster in state.get("clusters", [])
         ]
         clusters = await run_traced(
             "draft_review_documents",

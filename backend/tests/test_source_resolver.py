@@ -38,11 +38,7 @@ class DocumentationSourceResolverTests(unittest.IsolatedAsyncioTestCase):
             if request.url.path == "/repos/acme/product/readme":
                 return httpx.Response(
                     200,
-                    json={
-                        "content": _encoded(
-                            "# Product\n\n[Documentation](docs/)"
-                        )
-                    },
+                    json={"content": _encoded("# Product\n\n[Documentation](docs/)")},
                 )
             return httpx.Response(404, json={"message": "not found"})
 

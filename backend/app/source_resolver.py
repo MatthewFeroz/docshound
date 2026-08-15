@@ -11,10 +11,9 @@ from urllib.parse import quote, unquote, urljoin, urlparse
 
 import httpx2 as httpx
 
-from app.runtime_credentials import get_github_api_token
 from app.config import get_settings
+from app.runtime_credentials import get_github_api_token
 from app.state import DocumentationSource
-
 
 GITHUB_API = "https://api.github.com"
 DOC_EXTENSIONS = {".md", ".mdx"}
@@ -88,7 +87,7 @@ async def resolve_documentation_sources(
                 continue
             edit_source = _edit_source_from_html(html, final_url)
             if edit_source:
-                source_repo, source_root, edit_url = edit_source
+                source_repo, source_root, _edit_url = edit_source
                 candidates.append(
                     _Candidate(
                         repo=source_repo,
@@ -293,8 +292,7 @@ def _canonical_markdown_paths(tree: list[dict]) -> list[str]:
         str(item.get("path") or "")
         for item in tree
         if item.get("type") == "blob"
-        and PurePosixPath(str(item.get("path") or "")).suffix.lower()
-        in DOC_EXTENSIONS
+        and PurePosixPath(str(item.get("path") or "")).suffix.lower() in DOC_EXTENSIONS
         and not any(
             part.startswith(".")
             for part in PurePosixPath(str(item.get("path") or "")).parts[:-1]
@@ -347,9 +345,12 @@ def _manifest_roots(tree: list[dict]) -> set[str]:
             continue
         path = PurePosixPath(str(item.get("path") or ""))
         name = path.name.lower()
-        if name in {"docs.json", "mint.json", "mkdocs.yml", "mkdocs.yaml"} or name.startswith(
-            ("docusaurus.config.", "astro.config.")
-        ):
+        if name in {
+            "docs.json",
+            "mint.json",
+            "mkdocs.yml",
+            "mkdocs.yaml",
+        } or name.startswith(("docusaurus.config.", "astro.config.")):
             parent = str(path.parent)
             if parent != ".":
                 roots.add(parent)
@@ -466,7 +467,9 @@ async def _fetch_public_html(url: str) -> tuple[str, str]:
                 if response.is_redirect:
                     location = response.headers.get("location")
                     if not location:
-                        raise ValueError("Documentation site returned an empty redirect")
+                        raise ValueError(
+                            "Documentation site returned an empty redirect"
+                        )
                     current = urljoin(current, location)
                     continue
                 response.raise_for_status()
@@ -481,11 +484,13 @@ async def _fetch_public_html(url: str) -> tuple[str, str]:
                 async for chunk in response.aiter_bytes():
                     size += len(chunk)
                     if size > MAX_WEBSITE_BYTES:
-                        raise ValueError("Documentation homepage exceeded the size limit")
+                        raise ValueError(
+                            "Documentation homepage exceeded the size limit"
+                        )
                     chunks.append(chunk)
-                return b"".join(chunks).decode(response.encoding or "utf-8", "replace"), str(
-                    response.url
-                )
+                return b"".join(chunks).decode(
+                    response.encoding or "utf-8", "replace"
+                ), str(response.url)
     raise ValueError("Documentation site redirected too many times")
 
 

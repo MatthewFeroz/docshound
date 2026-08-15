@@ -3,7 +3,8 @@ import difflib
 import json
 import re
 import sqlite3
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
@@ -12,7 +13,7 @@ from urllib.parse import quote
 import httpx2 as httpx
 
 from app.approved_documents import ApprovedDocument, document_body_markdown
-from app.database import DB_PATH
+from app.database import DB_PATH, database_connection
 from app.tools.github import configured_github_token
 
 GITHUB_API = "https://api.github.com"
@@ -391,9 +392,7 @@ def _choose_document_path(
     if configs:
         config_parent = str(PurePosixPath(configs[0]).parent)
         root = "" if config_parent == "." else f"{config_parent}/"
-        existing_directories = {
-            path.rsplit("/", 1)[0] for path in paths if "/" in path
-        }
+        existing_directories = {path.rsplit("/", 1)[0] for path in paths if "/" in path}
         directory = next(
             (
                 f"{root}{candidate}".rstrip("/")
@@ -405,7 +404,11 @@ def _choose_document_path(
         return f"{directory}/{slug}.mdx", "mdx", configs[0]
 
     docusaurus = next(
-        (path for path in paths if PurePosixPath(path).name.startswith("docusaurus.config")),
+        (
+            path
+            for path in paths
+            if PurePosixPath(path).name.startswith("docusaurus.config")
+        ),
         None,
     )
     if docusaurus:
@@ -414,7 +417,11 @@ def _choose_document_path(
         return f"{root}docs/{slug}.mdx", "mdx", docusaurus
 
     mkdocs = next(
-        (path for path in paths if PurePosixPath(path).name in {"mkdocs.yml", "mkdocs.yaml"}),
+        (
+            path
+            for path in paths
+            if PurePosixPath(path).name in {"mkdocs.yml", "mkdocs.yaml"}
+        ),
         None,
     )
     if mkdocs:
@@ -434,13 +441,7 @@ def _build_document_content(document: ApprovedDocument, file_format: str) -> str
     if file_format == "mdx":
         title = _yaml_string(document.title)
         summary = _yaml_string(document.summary)
-        body = (
-            "---\n"
-            f"title: {title}\n"
-            f"description: {summary}\n"
-            "---\n\n"
-            f"{body}"
-        )
+        body = f"---\ntitle: {title}\ndescription: {summary}\n---\n\n{body}"
     return f"{body.rstrip()}\n"
 
 
@@ -480,9 +481,7 @@ def _build_patch(file_path: str, previous: str, content: str) -> str:
     )
 
 
-def _pull_request_body(
-    document: ApprovedDocument, change: DocumentationChange
-) -> str:
+def _pull_request_body(document: ApprovedDocument, change: DocumentationChange) -> str:
     source_lines = []
     for source in document.source_issues:
         kind = "Merged PR" if source.get("kind") == "pull_request" else "Issue"
@@ -601,9 +600,7 @@ async def _find_writable_fork(
 
 
 @asynccontextmanager
-async def _github_client(
-    token: str | None, client: httpx.AsyncClient | None
-):
+async def _github_client(token: str | None, client: httpx.AsyncClient | None):
     if client is not None:
         yield client
         return
@@ -722,44 +719,46 @@ async def _raise_for_github_response(
     )
 
 
-def _connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(DB_PATH, timeout=10)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS documentation_changes (
-            document_slug TEXT PRIMARY KEY,
-            target_repo TEXT NOT NULL,
-            base_branch TEXT NOT NULL,
-            branch_name TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            file_format TEXT NOT NULL,
-            detected_by TEXT NOT NULL,
-            edit_action TEXT NOT NULL DEFAULT 'create_page',
-            content TEXT NOT NULL,
-            patch TEXT NOT NULL,
-            existing_sha TEXT,
-            status TEXT NOT NULL,
-            pr_number INTEGER,
-            pr_url TEXT,
-            error TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    columns = {
-        row["name"]
-        for row in connection.execute("PRAGMA table_info(documentation_changes)")
-    }
-    if "edit_action" not in columns:
+@contextmanager
+def _connect() -> Iterator[sqlite3.Connection]:
+    with database_connection(
+        DB_PATH,
+        timeout=10,
+        write_ahead_log=True,
+    ) as connection:
         connection.execute(
-            "ALTER TABLE documentation_changes "
-            "ADD COLUMN edit_action TEXT NOT NULL DEFAULT 'create_page'"
+            """
+            CREATE TABLE IF NOT EXISTS documentation_changes (
+                document_slug TEXT PRIMARY KEY,
+                target_repo TEXT NOT NULL,
+                base_branch TEXT NOT NULL,
+                branch_name TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_format TEXT NOT NULL,
+                detected_by TEXT NOT NULL,
+                edit_action TEXT NOT NULL DEFAULT 'create_page',
+                content TEXT NOT NULL,
+                patch TEXT NOT NULL,
+                existing_sha TEXT,
+                status TEXT NOT NULL,
+                pr_number INTEGER,
+                pr_url TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
         )
-    return connection
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(documentation_changes)")
+        }
+        if "edit_action" not in columns:
+            connection.execute(
+                "ALTER TABLE documentation_changes "
+                "ADD COLUMN edit_action TEXT NOT NULL DEFAULT 'create_page'"
+            )
+        yield connection
 
 
 def _change_from_row(row: sqlite3.Row) -> DocumentationChange:

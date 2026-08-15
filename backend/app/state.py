@@ -19,7 +19,7 @@ class DocumentationSource(BaseModel):
 
     @field_validator("root")
     @classmethod
-    def validate_root(cls, value: str | None) -> str | None:
+    def validate_root(_cls, value: str | None) -> str | None:
         if value is None:
             return None
         normalized = value.strip().strip("/")
@@ -79,9 +79,7 @@ class DocSource(BaseModel):
 class DocumentationCoverage(BaseModel):
     status: Literal[
         "missing", "partial", "documented", "in_progress", "unable_to_verify"
-    ] = (
-        "unable_to_verify"
-    )
+    ] = "unable_to_verify"
     rationale: str
     recommended_action: Literal["create_page", "update_page", "no_change"]
     recommended_path: str | None = None
@@ -127,7 +125,9 @@ class AgentState(BaseModel):
     decisions: list[dict] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
-    status: Literal["running", "completed", "completed_with_errors", "failed"] = "running"
+    status: Literal["running", "completed", "completed_with_errors", "failed"] = (
+        "running"
+    )
 
 
 class RunResponse(BaseModel):

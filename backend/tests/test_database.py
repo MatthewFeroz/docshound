@@ -6,7 +6,7 @@ from app.database import DATABASE_FILENAME, resolve_database_path
 
 
 class DatabasePathTests(unittest.TestCase):
-    def test_reuses_database_from_before_the_app_split(self) -> None:
+    def test_legacy_database_does_not_override_backend_location(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repository_root = Path(temp_dir)
             backend_root = repository_root / "backend"
@@ -19,7 +19,10 @@ class DatabasePathTests(unittest.TestCase):
                 backend_root=backend_root,
             )
 
-            self.assertEqual(resolved, legacy_database)
+            self.assertEqual(
+                resolved,
+                backend_root / "data" / DATABASE_FILENAME,
+            )
 
     def test_prefers_backend_database_for_a_clean_install(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -35,7 +38,7 @@ class DatabasePathTests(unittest.TestCase):
                 backend_root / "data" / DATABASE_FILENAME,
             )
 
-    def test_does_not_replace_an_existing_backend_database(self) -> None:
+    def test_uses_backend_database_when_both_locations_exist(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repository_root = Path(temp_dir)
             backend_root = repository_root / "backend"

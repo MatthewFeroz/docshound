@@ -167,18 +167,21 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(created.pr_number, 87)
         self.assertEqual(created.pr_url, "https://github.com/acme/docs/pull/87")
         branch_request = next(
-            payload for method, path, payload in requests
+            payload
+            for method, path, payload in requests
             if method == "POST" and path.endswith("/git/refs")
         )
         self.assertEqual(branch_request["sha"], "base-sha")
         content_request = next(
-            payload for method, path, payload in requests
+            payload
+            for method, path, payload in requests
             if method == "PUT" and "/contents/" in path
         )
         committed = base64.b64decode(content_request["content"]).decode("utf-8")
         self.assertEqual(committed, change.content)
         pull_request = next(
-            payload for method, path, payload in requests
+            payload
+            for method, path, payload in requests
             if method == "POST" and path.endswith("/pulls")
         )
         self.assertEqual(pull_request["base"], "main")
@@ -327,7 +330,9 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Pull requests: read/write", message)
         self.assertIn("reuse the existing branch", message)
 
-    async def test_update_preserves_existing_page_and_appends_focused_section(self) -> None:
+    async def test_update_preserves_existing_page_and_appends_focused_section(
+        self,
+    ) -> None:
         existing_page = (
             "---\ntitle: Reliability\n---\n\n"
             "# Reliability\n\nExisting guidance stays exactly as written.\n"
@@ -352,9 +357,7 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
             if request.url.path.endswith("/contents/guides/reliability.mdx"):
                 return httpx.Response(
                     200,
-                    json={
-                        "content": base64.b64encode(existing_page.encode()).decode()
-                    },
+                    json={"content": base64.b64encode(existing_page.encode()).decode()},
                 )
             return httpx.Response(404, json={"message": "not found"})
 

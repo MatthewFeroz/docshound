@@ -222,11 +222,8 @@ the versioned `/api/v1` routes.
 
 ## Persistence
 
-The backend stores local application state in `backend/data/docshound.db`. When
-upgrading an existing source checkout, it automatically continues using
-`data/docshound.db` if that legacy database exists and the new path does not.
-No data is copied or deleted. Set `DOCSHOUND_DB_PATH` when a deployment needs an
-explicit shared location.
+The backend stores local application state in `backend/data/docshound.db`. Set
+`DOCSHOUND_DB_PATH` when a deployment needs an explicit shared location.
 
 The database includes completed runs, findings, approved document revisions,
 prepared patches, and created pull-request metadata.
@@ -241,7 +238,10 @@ Run backend tests:
 
 ```bash
 cd backend
-uv run --locked python -m unittest discover -s tests -v
+uv lock --check
+uv run ruff check app tests ../demo
+PYTHONWARNINGS='error::ResourceWarning' \
+  uv run --locked python -m unittest discover -s tests -v
 ```
 
 Run frontend checks:
@@ -253,6 +253,9 @@ bun run typecheck
 bun run test
 bun run build
 ```
+
+GitHub Actions runs the same locked backend and frontend checks, then builds
+both Docker images with `docker compose build`.
 
 ## Project structure
 

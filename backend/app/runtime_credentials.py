@@ -1,6 +1,5 @@
 from threading import RLock
 
-
 _lock = RLock()
 _merge_gateway_api_key: str | None = None
 _github_api_token: str | None = None

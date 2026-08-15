@@ -10,7 +10,6 @@
   "scripts": {
     "dev": "vite",
     "build": "bun run typecheck && vite build",
-    "build:sites": "bun run build && bun scripts/prepare-sites.mjs",
     "format:check": "prettier --check .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.app.json --pretty false && tsc --noEmit -p tsconfig.node.json --pretty false"

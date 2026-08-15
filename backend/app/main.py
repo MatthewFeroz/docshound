@@ -30,7 +30,6 @@ from app.approved_documents import (
     save_approved_document,
 )
 from app.config import get_settings
-from app.llm import get_llm_route
 from app.documentation_prs import (
     DocumentationPullRequestError,
     create_documentation_pull_request,
@@ -38,17 +37,18 @@ from app.documentation_prs import (
     prepare_documentation_change,
     write_enabled,
 )
+from app.llm import get_llm_route
 from app.run_store import load_run, load_runs, save_run
-from app.source_resolver import (
-    enrich_documentation_source,
-    resolve_documentation_sources,
-)
 from app.runtime_credentials import (
     get_github_api_token,
     get_github_connection,
     record_github_verification,
     set_github_api_token,
     set_merge_gateway_api_key,
+)
+from app.source_resolver import (
+    enrich_documentation_source,
+    resolve_documentation_sources,
 )
 from app.state import RUNS, AgentState, RunRequest, RunResponse
 from app.tools.docs import (
@@ -71,6 +71,7 @@ app.add_middleware(
 )
 
 REPO_PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+BACKGROUND_TASKS: set[asyncio.Task[AgentState]] = set()
 
 for persisted_run in load_runs():
     RUNS.setdefault(persisted_run.run_id, persisted_run)
@@ -116,7 +117,9 @@ def _normalize_repo(value: str) -> str:
     if repo.endswith(".git"):
         repo = repo[:-4]
     if not REPO_PART_PATTERN.fullmatch(owner) or not REPO_PART_PATTERN.fullmatch(repo):
-        raise ValueError("The repository owner or name contains unsupported characters.")
+        raise ValueError(
+            "The repository owner or name contains unsupported characters."
+        )
     return f"{owner}/{repo}"
 
 
@@ -133,9 +136,7 @@ def _run_response(state: AgentState) -> RunResponse:
         docs_sources=state.docs_sources,
         docs_candidates_inspected=state.docs_candidates_inspected,
         documentation_issues_scraped=state.documentation_issues_scraped,
-        documentation_pull_requests_scraped=(
-            state.documentation_pull_requests_scraped
-        ),
+        documentation_pull_requests_scraped=(state.documentation_pull_requests_scraped),
         top_gaps=state.clusters,
         decisions=state.decisions,
         warnings=state.warnings,
@@ -216,7 +217,9 @@ def _start_run(request: RunRequest) -> AgentState:
     )
     RUNS[state.run_id] = state
     save_run(state)
-    asyncio.create_task(run_agent(request, state=state))
+    task = asyncio.create_task(run_agent(request, state=state))
+    BACKGROUND_TASKS.add(task)
+    task.add_done_callback(BACKGROUND_TASKS.discard)
     return state
 
 
@@ -490,7 +493,9 @@ async def approve_finding(
     finding = _finding_response(state, index)
     markdown_source = request.markdown.strip()
     if not markdown_source:
-        raise HTTPException(status_code=422, detail="The approved document cannot be empty")
+        raise HTTPException(
+            status_code=422, detail="The approved document cannot be empty"
+        )
 
     cluster = finding.cluster
     if cluster.review_status == "no_change_needed":
@@ -611,7 +616,9 @@ async def create_documentation_pull_request_route(slug: str) -> DocumentResponse
         raise HTTPException(status_code=404, detail="Approved document not found")
     change = get_documentation_change(slug)
     if change is None:
-        raise HTTPException(status_code=409, detail="Preview the documentation change first")
+        raise HTTPException(
+            status_code=409, detail="Preview the documentation change first"
+        )
     try:
         await create_documentation_pull_request(document, change)
     except DocumentationPullRequestError as exc:

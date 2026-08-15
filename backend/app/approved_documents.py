@@ -1,10 +1,12 @@
 import json
 import re
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from app.database import DB_PATH
+from app.database import DB_PATH, database_connection
 
 
 @dataclass(frozen=True)
@@ -83,7 +85,9 @@ def get_approved_document(slug: str) -> ApprovedDocument | None:
     return _document_from_row(row) if row else None
 
 
-def get_approved_document_for_gap(run_id: str, gap_index: int) -> ApprovedDocument | None:
+def get_approved_document_for_gap(
+    run_id: str, gap_index: int
+) -> ApprovedDocument | None:
     with _connect() as connection:
         row = connection.execute(
             "SELECT * FROM approved_documents WHERE run_id = ? AND gap_index = ?",
@@ -92,28 +96,27 @@ def get_approved_document_for_gap(run_id: str, gap_index: int) -> ApprovedDocume
     return _document_from_row(row) if row else None
 
 
-def _connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(DB_PATH)
-    connection.row_factory = sqlite3.Row
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS approved_documents (
-            slug TEXT PRIMARY KEY,
-            run_id TEXT NOT NULL,
-            gap_index INTEGER NOT NULL,
-            repo TEXT NOT NULL,
-            title TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            markdown TEXT NOT NULL,
-            source_issues_json TEXT NOT NULL,
-            approved_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            UNIQUE(run_id, gap_index)
+@contextmanager
+def _connect() -> Iterator[sqlite3.Connection]:
+    with database_connection(DB_PATH) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS approved_documents (
+                slug TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                gap_index INTEGER NOT NULL,
+                repo TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                markdown TEXT NOT NULL,
+                source_issues_json TEXT NOT NULL,
+                approved_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(run_id, gap_index)
+            )
+            """
         )
-        """
-    )
-    return connection
+        yield connection
 
 
 def _document_slug(title: str, run_id: str, gap_index: int) -> str:

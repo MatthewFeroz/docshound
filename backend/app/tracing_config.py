@@ -3,7 +3,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from urllib.parse import unquote
 
-
 DEFAULT_LANGSMITH_ENDPOINT = "https://api.smith.langchain.com"
 DEFAULT_LANGSMITH_PROJECT = "docshound"
 
@@ -56,9 +55,7 @@ def resolve_trace_export_config(
         or _value(environment, "LANGCHAIN_PROJECT")
         or DEFAULT_LANGSMITH_PROJECT
     )
-    headers = _parse_otel_headers(
-        _value(environment, "OTEL_EXPORTER_OTLP_HEADERS")
-    )
+    headers = _parse_otel_headers(_value(environment, "OTEL_EXPORTER_OTLP_HEADERS"))
     headers.setdefault("x-api-key", api_key)
     headers.setdefault("Langsmith-Project", project)
     workspace_id = _value(environment, "LANGSMITH_WORKSPACE_ID")

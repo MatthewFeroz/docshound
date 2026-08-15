@@ -1,7 +1,6 @@
 .env
 .env.*
 !.env.example
-clickhouse_credentials.txt
 /backend/.venv/
 frontend/node_modules/
 frontend/dist/
