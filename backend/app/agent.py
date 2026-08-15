@@ -1,4 +1,5 @@
 from app import events
+from app.run_outcomes import apply_run_outcome
 from app.run_store import save_run
 from app.state import RUNS, AgentState, GapCluster, Issue, PullRequest, RunRequest
 from app.tracing import set_run_output, setup_tracing, traced_run
@@ -70,9 +71,16 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
     except Exception as exc:
         state.errors.append(str(exc))
         state.status = "failed"
+        apply_run_outcome(state)
         events.publish(
             state.run_id,
-            {"type": "run_completed", "status": "failed", "errors": state.errors},
+            {
+                "type": "run_completed",
+                "status": state.status,
+                "outcome": state.outcome,
+                "summary": state.summary,
+                "errors": state.errors,
+            },
         )
         events.close(state.run_id)
         save_run(state)
@@ -100,12 +108,15 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
     state.warnings = result.get("warnings", [])
     state.errors = result.get("errors", [])
     state.status = "completed_with_errors" if state.errors else "completed"
+    apply_run_outcome(state)
 
     events.publish(
         state.run_id,
         {
             "type": "run_completed",
             "status": state.status,
+            "outcome": state.outcome,
+            "summary": state.summary,
             "issues_scraped": len(state.issues),
             "pull_requests_scraped": len(state.pull_requests),
             "clusters_found": len(state.clusters),

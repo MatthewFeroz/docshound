@@ -2,7 +2,16 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
+
+RunOutcome = Literal[
+    "in_progress",
+    "recommendations_found",
+    "no_activity",
+    "no_recommendations",
+    "partial_failure",
+    "failed",
+]
 
 
 class DocumentationSource(BaseModel):
@@ -128,11 +137,24 @@ class AgentState(BaseModel):
     status: Literal["running", "completed", "completed_with_errors", "failed"] = (
         "running"
     )
+    outcome: RunOutcome = "in_progress"
+    summary: str = "Run is in progress."
+
+    @model_validator(mode="after")
+    def restore_terminal_outcome(self) -> "AgentState":
+        """Populate the outcome for runs saved before the outcome contract existed."""
+        if self.status != "running" and self.outcome == "in_progress":
+            from app.run_outcomes import apply_run_outcome
+
+            apply_run_outcome(self)
+        return self
 
 
 class RunResponse(BaseModel):
     run_id: str
     status: str
+    outcome: RunOutcome
+    summary: str
     repo: str
     dry_run: bool
     documentation_source: DocumentationSource | None = None

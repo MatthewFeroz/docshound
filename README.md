@@ -212,6 +212,12 @@ curl -sS http://127.0.0.1:8000/api/v1/runs/<RUN_ID>
 curl -N http://127.0.0.1:8000/api/v1/runs/<RUN_ID>/events
 ```
 
+Completed run responses and `run_completed` events include a user-facing
+`outcome` and `summary`. Outcomes distinguish recommendations from
+`no_activity`, `no_recommendations`, `partial_failure`, and `failed`, so clients
+never have to infer an empty result from counters or mistake a recoverable tool
+error for a successful run.
+
 The API also exposes findings, approval/rejection, approved documents,
 repository patch previews, patch downloads, and pull-request creation.
 

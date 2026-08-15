@@ -1507,6 +1507,51 @@ main {
   padding: 32px 0;
   text-align: center;
 }
+.run-outcome {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.run-outcome-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.run-outcome-heading span {
+  font-family: var(--mono);
+}
+.run-outcome h3,
+.run-outcome p,
+.run-outcome ul {
+  margin: 0;
+}
+.run-outcome h3 {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+.run-outcome ul {
+  display: grid;
+  gap: 4px;
+  padding-left: 20px;
+}
+.run-outcome-error {
+  border-color: color-mix(in srgb, var(--high) 36%, var(--border));
+  background: color-mix(in srgb, var(--high) 7%, var(--panel-2));
+}
+.run-outcome-error .run-outcome-heading span,
+.run-outcome-error h3 {
+  color: var(--high);
+}
+.run-outcome-success .run-outcome-heading span {
+  color: var(--low);
+}
 .gap-card {
   border: 1px solid var(--border);
   background: var(--panel-2);

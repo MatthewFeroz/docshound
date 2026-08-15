@@ -22,6 +22,7 @@ import type {
   GapCluster,
   Run,
   RunEvent,
+  RunOutcome,
   RuntimeConfig,
   SourceResolution,
 } from "../types";
@@ -38,6 +39,23 @@ interface TimelineItem {
 interface LiveGap {
   cluster: GapCluster;
   index: number;
+}
+
+interface TerminalRunSource {
+  status?: string;
+  outcome?: RunOutcome;
+  summary?: string;
+  warnings?: string[];
+  errors?: string[];
+  top_gaps?: GapCluster[];
+}
+
+interface TerminalRunPresentation {
+  outcome: Exclude<RunOutcome, "in_progress">;
+  title: string;
+  summary: string;
+  details: string[];
+  tone: "error" | "neutral" | "success";
 }
 
 type ReadinessSection = "github" | "documentation" | "model";
@@ -109,15 +127,117 @@ function presentEvent(event: RunEvent, sequence: number): TimelineItem {
         label: "Documentation finding discovered",
       };
     case "run_completed":
+      if (event.outcome === "failed" || event.status === "failed") {
+        return {
+          ...base,
+          icon: "✕",
+          kind: "error",
+          label: "Run failed",
+          detail: event.summary || event.errors?.[0],
+        };
+      }
+      if (
+        event.outcome === "partial_failure" ||
+        event.status === "completed_with_errors"
+      ) {
+        return {
+          ...base,
+          icon: "✕",
+          kind: "error",
+          label: "Run completed with errors",
+          detail: event.summary || event.errors?.[0],
+        };
+      }
+      if (event.outcome === "no_activity") {
+        return {
+          ...base,
+          icon: "○",
+          label: "No repository activity found",
+          detail: event.summary,
+        };
+      }
+      if (event.outcome === "no_recommendations") {
+        return {
+          ...base,
+          icon: "○",
+          label: "No documentation changes recommended",
+          detail: event.summary,
+        };
+      }
       return {
         ...base,
-        icon: event.status === "failed" ? "✕" : "✓",
-        kind: event.status === "failed" ? "error" : "success",
-        label: `Run ${event.status || "completed"}`,
+        icon: "✓",
+        kind: "success",
+        label: "Run completed",
+        detail: event.summary,
       };
     default:
       return { ...base, label: event.type.replaceAll("_", " ") };
   }
+}
+
+function terminalRunPresentation(
+  source: TerminalRunSource | null,
+): TerminalRunPresentation | null {
+  if (!source || source.status === "running") return null;
+
+  let outcome = source.outcome;
+  if (!outcome || outcome === "in_progress") {
+    if (source.status === "failed") outcome = "failed";
+    else if (source.status === "completed_with_errors" || source.errors?.length)
+      outcome = "partial_failure";
+    else return null;
+  }
+
+  const defaults: Record<
+    Exclude<RunOutcome, "in_progress">,
+    { title: string; summary: string; tone: TerminalRunPresentation["tone"] }
+  > = {
+    failed: {
+      title: "Run failed",
+      summary: "The run could not be completed.",
+      tone: "error",
+    },
+    partial_failure: {
+      title: "Run completed with errors",
+      summary:
+        "The run completed with errors, so its recommendations may be incomplete.",
+      tone: "error",
+    },
+    no_activity: {
+      title: "No repository activity found",
+      summary: "No relevant issues or merged pull requests were found.",
+      tone: "neutral",
+    },
+    no_recommendations: {
+      title: "No documentation changes recommended",
+      summary:
+        "Repository activity was found, but it did not produce a documentation recommendation.",
+      tone: "neutral",
+    },
+    recommendations_found: {
+      title: "Documentation recommendations ready",
+      summary: "The run completed with documentation recommendations.",
+      tone: "success",
+    },
+  };
+  const presentation = defaults[outcome];
+  const details = [...(source.errors ?? []), ...(source.warnings ?? [])];
+  if (outcome === "partial_failure" && details.length === 0) {
+    for (const cluster of source.top_gaps ?? []) {
+      if (cluster.documentation_coverage?.status === "unable_to_verify") {
+        details.push(cluster.documentation_coverage.rationale);
+      }
+    }
+  }
+
+  return {
+    outcome,
+    title: presentation.title,
+    summary: source.summary || presentation.summary,
+    details: [...new Set(details)],
+    tone: presentation.tone,
+  };
 }
 
 function modelLabel(model: string): string {
@@ -184,6 +304,7 @@ export function HomePage() {
   const [run, setRun] = useState<Run | null>(null);
   const [events, setEvents] = useState<TimelineItem[]>([]);
   const [liveGaps, setLiveGaps] = useState<LiveGap[]>([]);
+  const [terminalEvent, setTerminalEvent] = useState<RunEvent | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig | null>(
@@ -318,6 +439,9 @@ export function HomePage() {
             ].sort((left, right) => left.index - right.index),
           );
         }
+        if (event.type === "run_completed") {
+          setTerminalEvent(event);
+        }
         void refreshRun(runId);
       },
       () => void refreshRun(runId),
@@ -379,6 +503,7 @@ export function HomePage() {
       setRunId(created.run_id);
       setRun(null);
       setLiveGaps([]);
+      setTerminalEvent(null);
       setEvents([
         {
           id: "started",
@@ -404,6 +529,14 @@ export function HomePage() {
     run?.top_gaps.map((cluster, index) => ({ cluster, index })) ?? [];
   const displayedGaps =
     persistedGaps.length >= liveGaps.length ? persistedGaps : liveGaps;
+  const terminalSource: TerminalRunSource | null =
+    run && run.status !== "running" ? run : terminalEvent;
+  const terminalPresentation = terminalRunPresentation(terminalSource);
+  const showTerminalNotice = Boolean(
+    terminalPresentation &&
+    (terminalPresentation.outcome !== "recommendations_found" ||
+      displayedGaps.length === 0),
+  );
   const selectedRepo = repositorySlug(repo);
   const repoReady = selectedRepo !== null;
   const githubReady = hasConnectedGitHubAccess(
@@ -1133,6 +1266,29 @@ export function HomePage() {
                 <span className="panel-sub">{displayedGaps.length} found</span>
               </header>
               <div className="gaps">
+                {showTerminalNotice && terminalPresentation ? (
+                  <div
+                    className={`run-outcome run-outcome-${terminalPresentation.tone}`}
+                    role={
+                      terminalPresentation.tone === "error" ? "alert" : "status"
+                    }
+                  >
+                    <div className="run-outcome-heading">
+                      <span aria-hidden="true">
+                        {terminalPresentation.tone === "error" ? "✕" : "○"}
+                      </span>
+                      <h3>{terminalPresentation.title}</h3>
+                    </div>
+                    <p>{terminalPresentation.summary}</p>
+                    {terminalPresentation.details.length ? (
+                      <ul>
+                        {terminalPresentation.details.map((detail) => (
+                          <li key={detail}>{detail}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                ) : null}
                 {displayedGaps.length ? (
                   displayedGaps.map(({ cluster, index }) => (
                     <GapCard
@@ -1142,12 +1298,12 @@ export function HomePage() {
                       runId={runId}
                     />
                   ))
-                ) : (
+                ) : !terminalPresentation ? (
                   <div className="gaps-empty">
                     Analysis is in progress. The first findings can take 15–30
                     seconds to appear.
                   </div>
-                )}
+                ) : null}
               </div>
             </section>
           </section>
