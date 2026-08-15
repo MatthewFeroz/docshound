@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   resolveSources: vi.fn(),
   setGitHubApiKey: vi.fn(),
   setMergeGatewayApiKey: vi.fn(),
+  scrollIntoView: vi.fn(),
   eventHandler: undefined as ((event: unknown) => void) | undefined,
 }));
 
@@ -81,6 +82,24 @@ const progressiveGap: GapCluster = {
   documentation_coverage: null,
 };
 
+async function connectGitHub(container: HTMLElement) {
+  await waitFor(() =>
+    expect(container.querySelector(".readiness-connect")).toHaveAttribute(
+      "data-open",
+    ),
+  );
+  const keyInput = screen.getByLabelText(/fine-grained personal access/i);
+  fireEvent.change(keyInput, { target: { value: "github_pat_secret" } });
+  fireEvent.click(screen.getByRole("button", { name: /^connect github$/i }));
+  await waitFor(() =>
+    expect(mocks.setGitHubApiKey).toHaveBeenCalledWith(
+      "acme/product",
+      "github_pat_secret",
+    ),
+  );
+  await screen.findByText(/repository access connected/i);
+}
+
 describe("HomePage live analysis", () => {
   beforeEach(() => {
     mocks.eventHandler = undefined;
@@ -90,6 +109,11 @@ describe("HomePage live analysis", () => {
     mocks.resolveSources.mockReset();
     mocks.setGitHubApiKey.mockReset();
     mocks.setMergeGatewayApiKey.mockReset();
+    mocks.scrollIntoView.mockReset();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: mocks.scrollIntoView,
+    });
     mocks.getRuntimeConfig.mockResolvedValue({
       write_enabled: false,
       llm_gateway: "merge",
@@ -179,7 +203,9 @@ describe("HomePage live analysis", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(container.querySelector(".hero-model-picker summary")!);
+    fireEvent.click(
+      container.querySelector("#model-connection .readiness-trigger")!,
+    );
     const keyInput = screen.getByLabelText(/merge gateway api key/i);
     fireEvent.change(keyInput, { target: { value: "merge-secret-key" } });
     fireEvent.click(screen.getByRole("button", { name: /save connection/i }));
@@ -220,10 +246,14 @@ describe("HomePage live analysis", () => {
     });
     expect(screen.getByRole("button", { name: /run agent/i })).toBeDisabled();
 
-    fireEvent.click(container.querySelector(".readiness-connect > summary")!);
+    await waitFor(() =>
+      expect(container.querySelector(".readiness-connect")).toHaveAttribute(
+        "data-open",
+      ),
+    );
     const keyInput = screen.getByLabelText(/fine-grained personal access/i);
     fireEvent.change(keyInput, { target: { value: "github_pat_secret" } });
-    fireEvent.click(screen.getByRole("button", { name: /connect github/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^connect github$/i }));
 
     await waitFor(() =>
       expect(mocks.setGitHubApiKey).toHaveBeenCalledWith(
@@ -232,14 +262,16 @@ describe("HomePage live analysis", () => {
       ),
     );
     await waitFor(() => expect(keyInput).toHaveValue(""));
-    expect(screen.getByText(/verified read access/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/repository access connected/i),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /run agent/i })).toBeEnabled(),
     );
   });
 
   it("renders a gap as soon as it arrives on the event stream", async () => {
-    render(
+    const { container } = render(
       <MemoryRouter>
         <HomePage />
       </MemoryRouter>,
@@ -248,6 +280,7 @@ describe("HomePage live analysis", () => {
     fireEvent.change(screen.getByPlaceholderText(/paste your repo/i), {
       target: { value: "acme/product" },
     });
+    await connectGitHub(container);
     const runButton = screen.getByRole("button", { name: /run agent/i });
     await waitFor(() => expect(runButton).toBeEnabled());
     fireEvent.click(runButton);
@@ -261,6 +294,7 @@ describe("HomePage live analysis", () => {
     );
 
     await waitFor(() => expect(mocks.eventHandler).toBeDefined());
+    mocks.scrollIntoView.mockClear();
     act(() => {
       mocks.eventHandler?.({
         type: "gap_found",
@@ -271,6 +305,12 @@ describe("HomePage live analysis", () => {
 
     expect(await screen.findByText("Retry behavior")).toBeInTheDocument();
     expect(screen.getByText("1 found")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mocks.scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "nearest",
+      }),
+    );
   });
 
   it("shows a separate official docs repo and includes its activity", async () => {
@@ -298,17 +338,112 @@ describe("HomePage live analysis", () => {
     fireEvent.change(screen.getByPlaceholderText(/paste your repo/i), {
       target: { value: "acme/product" },
     });
+    await connectGitHub(container);
 
     expect(
       await screen.findAllByText(/acme\/docs \/ content\/en\/docs · 42 pages/i),
     ).not.toHaveLength(0);
     fireEvent.click(
-      container.querySelector(".documentation-connect > summary")!,
+      container.querySelector(".documentation-connect .readiness-trigger")!,
     );
     expect(
       screen.getByText(/also analyze issues and merged prs from acme\/docs/i),
     ).toBeInTheDocument();
     expect(screen.getByRole("checkbox")).toBeChecked();
     expect(screen.getByRole("button", { name: /run agent/i })).toBeEnabled();
+  });
+
+  it("keeps one setup section open and shows READY for every completed step", async () => {
+    const { container } = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const sections = Array.from(
+      container.querySelectorAll<HTMLElement>(".readiness-connect"),
+    );
+    expect(sections).toHaveLength(3);
+    expect(
+      container.querySelector(".hero-model-picker"),
+    ).not.toBeInTheDocument();
+    expect(
+      container.querySelector(".run-readiness-head"),
+    ).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".ui-accordion-chevron")).toHaveLength(3);
+    await waitFor(() =>
+      expect(
+        Array.from(
+          container.querySelectorAll(".readiness-action"),
+          (element) => element.textContent,
+        ),
+      ).toEqual(["WAITING", "WAITING", "READY"]),
+    );
+    expect(
+      container.querySelector(".github-connect-head"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(sections[0].querySelector(".readiness-trigger")!);
+    await waitFor(() => expect(sections[0]).toHaveAttribute("data-open"));
+    fireEvent.click(sections[1].querySelector(".readiness-trigger")!);
+    await waitFor(() => {
+      expect(sections[0]).not.toHaveAttribute("data-open");
+      expect(sections[1]).toHaveAttribute("data-open");
+    });
+    expect(
+      screen.getByText(/connect github to auto-discover the source/i),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText(/paste your repo/i), {
+      target: { value: "acme/product" },
+    });
+    await waitFor(() => expect(sections[0]).toHaveAttribute("data-open"));
+    expect(sections[0].querySelector(".readiness-action")).toHaveTextContent(
+      "WAITING",
+    );
+    expect(mocks.resolveSources).not.toHaveBeenCalled();
+
+    const keyInput = screen.getByLabelText(/fine-grained personal access/i);
+    const connectButton = screen.getByRole("button", {
+      name: /^connect github$/i,
+    });
+    expect(keyInput).toBeRequired();
+    expect(connectButton).toBeDisabled();
+    fireEvent.change(keyInput, { target: { value: "github_pat_secret" } });
+    expect(connectButton).toBeEnabled();
+    fireEvent.click(connectButton);
+
+    await waitFor(() =>
+      expect(mocks.setGitHubApiKey).toHaveBeenCalledWith(
+        "acme/product",
+        "github_pat_secret",
+      ),
+    );
+    await waitFor(() => expect(mocks.resolveSources).toHaveBeenCalled());
+    await waitFor(() => {
+      const states = Array.from(
+        container.querySelectorAll(".readiness-action"),
+        (element) => element.textContent,
+      );
+      expect(states).toEqual(["READY", "READY", "READY"]);
+    });
+
+    fireEvent.click(sections[1].querySelector(".readiness-trigger")!);
+    await waitFor(() => expect(sections[1]).toHaveAttribute("data-open"));
+    const sourceOptions = container.querySelector(".docs-source-options-row")!;
+    expect(sourceOptions).toHaveTextContent(
+      "Activity already included for this repository.",
+    );
+    const sourceChange = screen.getByRole("button", {
+      name: /change source/i,
+    });
+    expect(sourceOptions).toContainElement(sourceChange);
+    fireEvent.click(sourceChange);
+    expect(
+      await screen.findByLabelText(/documentation repository/i),
+    ).toBeInTheDocument();
+    expect(
+      sourceChange.closest("[data-slot='accordion-item']"),
+    ).toHaveAttribute("data-open");
   });
 });

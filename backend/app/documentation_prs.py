@@ -12,8 +12,8 @@ from urllib.parse import quote
 import httpx
 
 from app.approved_documents import ApprovedDocument, document_body_markdown
-from app.config import get_settings
 from app.database import DB_PATH
+from app.tools.github import configured_github_token
 
 GITHUB_API = "https://api.github.com"
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -55,19 +55,25 @@ async def prepare_documentation_change(
     client: httpx.AsyncClient | None = None,
 ) -> DocumentationChange:
     target_repo = _validate_repo(target_repo)
-    token = get_settings().github_write_token or get_settings().github_token
+    token = configured_github_token()
     async with _github_client(token, client) as github:
         repository = await _request_json(
             github,
             "GET",
             f"/repos/{target_repo}",
+            target_repo=target_repo,
+            operation="read_repository",
         )
+        if token:
+            await _ensure_publish_access(github, target_repo, repository)
         base_branch = str(repository.get("default_branch") or "main")
         tree = await _request_json(
             github,
             "GET",
             f"/repos/{target_repo}/git/trees/{quote(base_branch, safe='')}",
             params={"recursive": "1"},
+            target_repo=target_repo,
+            operation="read_repository",
         )
         tree_items = tree.get("tree") or []
         paths = {
@@ -89,6 +95,8 @@ async def prepare_documentation_change(
                 "GET",
                 f"/repos/{target_repo}/contents/{quote(file_path, safe='/')}",
                 params={"ref": base_branch},
+                target_repo=target_repo,
+                operation="read_repository",
             )
             encoded = str(existing.get("content") or "").replace("\n", "")
             if encoded:
@@ -147,19 +155,30 @@ async def create_documentation_pull_request(
     if change.status == "created" and change.pr_url:
         return change
 
-    write_token = token or get_settings().github_write_token
+    write_token = token or configured_github_token()
     if not write_token:
         raise DocumentationPullRequestError(
-            "Set GITHUB_WRITE_TOKEN to create the documentation pull request."
+            "Connect GitHub from the homepage before creating the pull request. "
+            "DocsHound uses that one token for repository research and publishing."
         )
 
     try:
         async with _github_client(write_token, client) as github:
+            repository = await _request_json(
+                github,
+                "GET",
+                f"/repos/{change.target_repo}",
+                target_repo=change.target_repo,
+                operation="read_repository",
+            )
+            await _ensure_publish_access(github, change.target_repo, repository)
             base_ref = await _request_json(
                 github,
                 "GET",
                 f"/repos/{change.target_repo}/git/ref/heads/"
                 f"{quote(change.base_branch, safe='')}",
+                target_repo=change.target_repo,
+                operation="read_base_branch",
             )
             base_sha = str((base_ref.get("object") or {}).get("sha") or "")
             if not base_sha:
@@ -177,6 +196,8 @@ async def create_documentation_pull_request(
                         "ref": f"refs/heads/{change.branch_name}",
                         "sha": base_sha,
                     },
+                    target_repo=change.target_repo,
+                    operation="create_branch",
                 )
             except DocumentationPullRequestError as exc:
                 if exc.status_code != 422:
@@ -187,6 +208,8 @@ async def create_documentation_pull_request(
                     "GET",
                     f"/repos/{change.target_repo}/git/ref/heads/"
                     f"{quote(change.branch_name, safe='')}",
+                    target_repo=change.target_repo,
+                    operation="read_branch",
                 )
 
             branch_file_sha = change.existing_sha
@@ -204,7 +227,11 @@ async def create_documentation_pull_request(
                     if encoded:
                         branch_content = base64.b64decode(encoded).decode("utf-8")
                 elif response.status_code != 404:
-                    await _raise_for_github_response(response)
+                    await _raise_for_github_response(
+                        response,
+                        target_repo=change.target_repo,
+                        operation="read_branch_file",
+                    )
 
             content_payload: dict[str, object] = {
                 "message": f"docs: {document.title}",
@@ -222,6 +249,8 @@ async def create_documentation_pull_request(
                     f"/repos/{change.target_repo}/contents/"
                     f"{quote(change.file_path, safe='/')}",
                     json_body=content_payload,
+                    target_repo=change.target_repo,
+                    operation="write_contents",
                 )
 
             owner = change.target_repo.split("/", 1)[0]
@@ -237,6 +266,8 @@ async def create_documentation_pull_request(
                     "POST",
                     f"/repos/{change.target_repo}/pulls",
                     json_body=pr_payload,
+                    target_repo=change.target_repo,
+                    operation="create_pull_request",
                 )
             except DocumentationPullRequestError as exc:
                 if exc.status_code != 422:
@@ -249,6 +280,8 @@ async def create_documentation_pull_request(
                         "state": "open",
                         "head": f"{owner}:{change.branch_name}",
                     },
+                    target_repo=change.target_repo,
+                    operation="find_pull_request",
                 )
                 if not isinstance(existing, list) or not existing:
                     raise
@@ -333,7 +366,7 @@ def save_documentation_change(change: DocumentationChange) -> None:
 
 
 def write_enabled() -> bool:
-    return bool(get_settings().github_write_token)
+    return bool(configured_github_token())
 
 
 def _choose_document_path(
@@ -503,6 +536,70 @@ def _yaml_string(value: str) -> str:
     return json.dumps(compact, ensure_ascii=False)
 
 
+async def _ensure_publish_access(
+    github: httpx.AsyncClient,
+    target_repo: str,
+    repository: dict,
+) -> None:
+    permissions = repository.get("permissions") or {}
+    if permissions.get("push") is True:
+        return
+
+    account_payload = await _request_json(
+        github,
+        "GET",
+        "/user",
+        target_repo=target_repo,
+        operation="identify_account",
+    )
+    account = str(account_payload.get("login") or "the connected GitHub account")
+    suggested_repo = await _find_writable_fork(github, target_repo, account)
+    if suggested_repo:
+        raise DocumentationPullRequestError(
+            f"DocsHound can read {target_repo}, but the connected GitHub account "
+            f"{account} cannot publish there. Change Documentation repository to "
+            f"{suggested_repo}, refresh the preview, and try again. The connected "
+            "token must grant Contents: read/write and Pull requests: read/write "
+            "for the destination repository. This attempt did not create a branch "
+            "or pull request."
+        )
+    raise DocumentationPullRequestError(
+        f"DocsHound can read {target_repo}, but the connected GitHub account "
+        f"{account} cannot publish there. Choose a fork or repository where "
+        f"{account} has write access, refresh the preview, and try again. The "
+        "connected token must include that destination and grant Contents: "
+        "read/write and Pull requests: read/write. No branch or pull request was "
+        "created by this attempt."
+    )
+
+
+async def _find_writable_fork(
+    github: httpx.AsyncClient,
+    target_repo: str,
+    account: str,
+) -> str | None:
+    repo_name = target_repo.split("/", 1)[1]
+    candidate = f"{account}/{repo_name}"
+    if candidate.lower() == target_repo.lower():
+        return None
+
+    response = await github.get(f"/repos/{candidate}")
+    if response.status_code != 200:
+        return None
+    payload = response.json()
+    permissions = payload.get("permissions") or {}
+    if permissions.get("push") is not True:
+        return None
+
+    related_repositories = {
+        str((payload.get(relation) or {}).get("full_name") or "").lower()
+        for relation in ("parent", "source")
+    }
+    if payload.get("fork") is True and target_repo.lower() in related_repositories:
+        return str(payload.get("full_name") or candidate)
+    return None
+
+
 @asynccontextmanager
 async def _github_client(
     token: str | None, client: httpx.AsyncClient | None
@@ -532,22 +629,95 @@ async def _request_json(
     *,
     params: dict[str, str] | None = None,
     json_body: dict[str, object] | None = None,
+    target_repo: str | None = None,
+    operation: str | None = None,
 ):
     response = await client.request(method, path, params=params, json=json_body)
     if response.status_code >= 400:
-        await _raise_for_github_response(response)
+        await _raise_for_github_response(
+            response,
+            target_repo=target_repo,
+            operation=operation,
+        )
     if response.status_code == 204 or not response.content:
         return {}
     return response.json()
 
 
-async def _raise_for_github_response(response: httpx.Response) -> None:
+async def _raise_for_github_response(
+    response: httpx.Response,
+    *,
+    target_repo: str | None = None,
+    operation: str | None = None,
+) -> None:
     try:
-        detail = response.json().get("message")
-    except Exception:
+        payload = response.json()
+        detail = payload.get("message") if isinstance(payload, dict) else None
+    except ValueError:
         detail = response.text[:240]
+
+    repository = target_repo or "the destination repository"
+    if response.status_code == 401:
+        message = (
+            "GitHub rejected the connected token. Reconnect GitHub from the "
+            "homepage, then refresh this preview. The token is held only in the "
+            "local backend process and may have expired or been revoked."
+        )
+    elif (
+        response.status_code == 403
+        and response.headers.get("x-ratelimit-remaining") == "0"
+    ):
+        reset_at = response.headers.get("x-ratelimit-reset")
+        reset_copy = f" after reset time {reset_at}" if reset_at else " later"
+        message = (
+            f"GitHub rate-limited DocsHound while publishing to {repository}. "
+            f"Wait until the limit resets{reset_copy}, then try again. The prepared "
+            "documentation change is still available."
+        )
+    elif operation in {"create_branch", "write_contents"} and response.status_code in {
+        403,
+        404,
+    }:
+        message = (
+            f"GitHub blocked DocsHound from writing documentation to {repository}. "
+            "Reconnect a token that includes this repository and grants Contents: "
+            "read/write, then try again. No pull request was created."
+        )
+    elif operation == "create_pull_request" and response.status_code in {403, 404}:
+        message = (
+            f"The documentation branch was prepared in {repository}, but GitHub "
+            "blocked pull-request creation. Reconnect a token that includes this "
+            "repository and grants Pull requests: read/write, then click Create "
+            "documentation PR again. DocsHound will reuse the existing branch."
+        )
+    elif operation == "read_repository" and response.status_code == 404:
+        message = (
+            f"DocsHound could not access {repository}. Confirm the repository is "
+            "entered as owner/repository and that the connected token includes it. "
+            "For a fine-grained token, add the repository under Repository access, "
+            "then reconnect GitHub."
+        )
+    elif operation == "read_base_branch" and response.status_code == 404:
+        message = (
+            f"DocsHound could not find the configured base branch in {repository}. "
+            "Refresh the preview so DocsHound can detect the repository's current "
+            "default branch before trying again."
+        )
+    elif response.status_code == 403:
+        message = (
+            f"GitHub denied the request for {repository}. Confirm the connected token "
+            "includes this repository and grants Contents: read/write and Pull "
+            "requests: read/write, then reconnect GitHub and try again."
+        )
+    else:
+        message = (
+            f"GitHub could not complete the request for {repository} "
+            f"({response.status_code}: {detail or 'request failed'}). The prepared "
+            "documentation change is still available; verify the destination and "
+            "retry."
+        )
     raise DocumentationPullRequestError(
-        f"GitHub returned {response.status_code}: {detail or 'request failed'}",
+        message,
         status_code=response.status_code,
     )
 
