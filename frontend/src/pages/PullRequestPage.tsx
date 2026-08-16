@@ -112,8 +112,9 @@ export function PullRequestPage() {
           </div>
           <h1>Review the repository change</h1>
           <p className="document-summary">
-            Confirm where the approved document belongs, inspect the patch, and
-            create a normal documentation pull request.
+            Confirm the upstream destination and inspect the patch. At publish
+            time, DocsHound will write directly or automatically reuse or create
+            your fork.
           </p>
           {displayError ? (
             <div className="pr-alert" role="alert">
@@ -123,7 +124,7 @@ export function PullRequestPage() {
           ) : null}
           <form className="pr-target-form" onSubmit={refreshPreview}>
             <label>
-              Documentation repository
+              Upstream documentation repository
               <input
                 value={targetRepo}
                 onChange={(event) => setTargetRepo(event.target.value)}
@@ -149,6 +150,16 @@ export function PullRequestPage() {
           {change ? (
             <>
               <section className="pr-target-summary">
+                <div>
+                  <span>Upstream repository</span>
+                  <strong>{change.target_repo}</strong>
+                </div>
+                <div>
+                  <span>Write repository</span>
+                  <strong>
+                    {change.publish_repo || "Resolved when publishing"}
+                  </strong>
+                </div>
                 <div>
                   <span>Base branch</span>
                   <strong>{change.base_branch}</strong>
@@ -198,6 +209,15 @@ export function PullRequestPage() {
                         correct.
                       </span>
                     </>
+                  ) : change.status === "branch_ready" ? (
+                    <>
+                      <strong>Branch ready for an upstream pull request</strong>
+                      <span>
+                        DocsHound created the fork, branch, and commit. GitHub
+                        needs one browser confirmation to open the upstream pull
+                        request.
+                      </span>
+                    </>
                   ) : displayError ? (
                     <>
                       <strong>Publication needs attention</strong>
@@ -208,10 +228,11 @@ export function PullRequestPage() {
                     </>
                   ) : payload.write_enabled ? (
                     <>
-                      <strong>Ready to create the pull request</strong>
+                      <strong>Ready to publish upstream</strong>
                       <span>
-                        This creates one branch, one documentation commit, and
-                        one pull request.
+                        DocsHound will choose a writable destination, create one
+                        branch and commit, and open the pull request against the
+                        upstream repository.
                       </span>
                     </>
                   ) : (
@@ -224,14 +245,17 @@ export function PullRequestPage() {
                     </>
                   )}
                 </div>
-                {change.status === "created" && change.pr_url ? (
+                {["created", "branch_ready"].includes(change.status) &&
+                change.pr_url ? (
                   <a
                     className="document-primary-action"
                     href={change.pr_url}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Open pull request
+                    {change.status === "branch_ready"
+                      ? "Open upstream PR"
+                      : "Open pull request"}
                   </a>
                 ) : (
                   <button
@@ -240,7 +264,7 @@ export function PullRequestPage() {
                     onClick={createPullRequest}
                     disabled={!payload.write_enabled || submitting}
                   >
-                    {submitting ? "Creating…" : "Create documentation PR"}
+                    {submitting ? "Publishing…" : "Publish upstream PR"}
                   </button>
                 )}
               </footer>

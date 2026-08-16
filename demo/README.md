@@ -39,14 +39,17 @@ Use one GitHub token that can read the public OpenCode repository and can write
 to `MatthewFeroz/opencode`. The fork needs Contents and Pull requests read/write
 access. The preflight validates the authenticated account, fork relationship,
 push permission, live model access, LangSmith access, and the exact source files
-without printing any secret.
+without printing any secret. Keep the token in the ignored root `.env` or
+`backend/.env`; the demo homepage verifies the server-managed token without
+displaying it or asking you to paste it into the browser.
 
 ## Stage flow
 
 1. Run `./demo/run.sh opencode` before presenting. Do not proceed if preflight
    reports a failure.
 2. Paste `anomalyco/opencode` into the main Repository field.
-3. Connect the same GitHub token checked by preflight.
+3. Wait for GitHub access to show **READY**. DocsHound verifies the token already
+   configured on the server; no token field is shown.
 4. In Official documentation, use **Change source** and select
    `MatthewFeroz/opencode`. Keep the detected root
    `packages/web/src/content/docs`.

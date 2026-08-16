@@ -136,6 +136,7 @@ class ApiTests(unittest.TestCase):
                 "llm_configured": True,
                 "credential_input_enabled": True,
                 "github_configured": False,
+                "github_server_configured": False,
                 "github_account": None,
                 "github_verified_repo": None,
                 "github_document_fetch_limit": 100,
@@ -201,12 +202,44 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["github_configured"])
+        self.assertFalse(response.json()["github_server_configured"])
         self.assertEqual(response.json()["github_account"], "octocat")
         self.assertEqual(response.json()["github_verified_repo"], "acme/product")
         self.assertEqual(response.json()["github_document_fetch_limit"], 100)
         self.assertEqual(response.json()["github_documents_per_finding"], 8)
         self.assertNotIn("github_pat_secret", response.text)
         validate.assert_awaited_once_with("acme/product", "github_pat_secret")
+
+    def test_server_github_credential_is_verified_without_browser_secret(
+        self,
+    ) -> None:
+        with (
+            patch(
+                "app.main.get_settings",
+                return_value=SimpleNamespace(
+                    app_env="development",
+                    github_token="server-github-secret",
+                ),
+            ),
+            patch(
+                "app.main.validate_github_access",
+                new=AsyncMock(return_value=("octocat", "acme/product")),
+            ) as validate,
+            patch("app.main.get_llm_route", return_value=None),
+            patch("app.main.write_enabled", return_value=True),
+        ):
+            response = self.client.post(
+                "/api/v1/config/github-credential",
+                json={"repo": "acme/product"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["github_configured"])
+        self.assertTrue(response.json()["github_server_configured"])
+        self.assertEqual(response.json()["github_account"], "octocat")
+        self.assertEqual(response.json()["github_verified_repo"], "acme/product")
+        self.assertNotIn("server-github-secret", response.text)
+        validate.assert_awaited_once_with("acme/product", "server-github-secret")
 
     def test_github_credential_rejects_an_inaccessible_repository(self) -> None:
         with (

@@ -249,6 +249,7 @@ def _runtime_config_response() -> RuntimeConfigResponse:
     github_configured = bool(
         get_github_api_token() or getattr(settings, "github_token", None)
     )
+    github_server_configured = bool(getattr(settings, "github_token", None))
     return RuntimeConfigResponse(
         write_enabled=write_enabled(),
         llm_gateway=route.gateway if route else None,
@@ -257,6 +258,7 @@ def _runtime_config_response() -> RuntimeConfigResponse:
         llm_configured=route is not None,
         credential_input_enabled=credential_input_enabled,
         github_configured=github_configured,
+        github_server_configured=github_server_configured,
         github_account=github_account,
         github_verified_repo=github_verified_repo,
         github_document_fetch_limit=AUTHENTICATED_DOCUMENT_FETCH_LIMIT,

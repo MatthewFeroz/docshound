@@ -16,11 +16,10 @@ vi.mock("../api", () => ({
 }));
 
 const permissionMessage =
-  "DocsHound can read upstream/pi, but the connected GitHub account matt " +
-  "cannot publish there. Change Documentation repository to matt/pi, refresh " +
-  "the preview, and try again. The connected token must grant Contents: " +
-  "read/write and Pull requests: read/write for the destination repository. " +
-  "This attempt did not create a branch or pull request.";
+  "DocsHound could not create a fork of upstream/pi for matt (403: Resource " +
+  "not accessible). Create the fork once on GitHub or reconnect a token that " +
+  "permits fork creation; DocsHound will detect and reuse it automatically on " +
+  "the next attempt. No branch was created.";
 
 const payload: DocumentPayload = {
   document: {
@@ -39,6 +38,7 @@ const payload: DocumentPayload = {
   documentation_change: {
     document_slug: "theme-cli-override-run12345-1",
     target_repo: "upstream/pi",
+    publish_repo: null,
     base_branch: "main",
     branch_name: "docshound/theme-cli-override-run12345",
     file_path: "docs/theme-cli-override.md",
@@ -90,20 +90,47 @@ describe("PullRequestPage", () => {
     renderPage();
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Create documentation PR" }),
+      await screen.findByRole("button", { name: "Publish upstream PR" }),
     );
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Could not complete the request");
-    expect(alert).toHaveTextContent("cannot publish there");
-    expect(alert).toHaveTextContent("matt/pi");
-    expect(alert).toHaveTextContent("Contents: read/write");
-    expect(alert).toHaveTextContent("Pull requests: read/write");
+    expect(alert).toHaveTextContent("could not create a fork");
+    expect(alert).toHaveTextContent("Create the fork once on GitHub");
+    expect(alert).toHaveTextContent("reuse it automatically");
     expect(screen.getByText("Publication needs attention")).toBeInTheDocument();
     expect(
       screen.getByText(
         "Follow the guidance above, refresh the preview, and try again.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("opens the upstream comparison when GitHub needs browser confirmation", async () => {
+    apiMocks.createPullRequest.mockResolvedValue({
+      ...payload,
+      documentation_change: {
+        ...payload.documentation_change!,
+        publish_repo: "matt/pi",
+        status: "branch_ready",
+        pr_url:
+          "https://github.com/upstream/pi/compare/main...matt:docshound/theme-cli-override-run12345?expand=1",
+        error:
+          "The documentation branch is ready in matt/pi. GitHub requires confirmation.",
+      },
+    });
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Publish upstream PR" }),
+    );
+
+    expect(
+      await screen.findByText("Branch ready for an upstream pull request"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("matt/pi")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open upstream PR" }),
+    ).toHaveAttribute("href", expect.stringContaining("upstream/pi/compare"));
   });
 });

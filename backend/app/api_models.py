@@ -50,6 +50,7 @@ class DocumentationChangeResponse(BaseModel):
 
     document_slug: str
     target_repo: str
+    publish_repo: str | None
     base_branch: str
     branch_name: str
     file_path: str
@@ -105,6 +106,7 @@ class RuntimeConfigResponse(BaseModel):
     llm_configured: bool
     credential_input_enabled: bool
     github_configured: bool
+    github_server_configured: bool
     github_account: str | None = None
     github_verified_repo: str | None = None
     github_document_fetch_limit: int

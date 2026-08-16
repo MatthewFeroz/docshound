@@ -181,6 +181,14 @@ export function DocumentPage() {
                     The approved page is ready for repository review and merge.
                   </p>
                 </>
+              ) : change?.status === "branch_ready" ? (
+                <>
+                  <h2>Documentation branch ready</h2>
+                  <p>
+                    The fork, branch, and commit are ready. Confirm the upstream
+                    pull request on GitHub.
+                  </p>
+                </>
               ) : change ? (
                 <>
                   <h2>Documentation change prepared</h2>
@@ -204,14 +212,18 @@ export function DocumentPage() {
                 </>
               )}
             </div>
-            {change?.status === "created" && change.pr_url ? (
+            {change &&
+            ["created", "branch_ready"].includes(change.status) &&
+            change.pr_url ? (
               <a
                 className="document-primary-action"
                 href={change.pr_url}
                 target="_blank"
                 rel="noreferrer"
               >
-                Open pull request
+                {change.status === "branch_ready"
+                  ? "Open upstream PR"
+                  : "Open pull request"}
               </a>
             ) : change ? (
               <Link
@@ -223,13 +235,17 @@ export function DocumentPage() {
             ) : (
               <form className="document-export-form" onSubmit={preview}>
                 <label>
-                  Documentation repository
+                  Upstream documentation repository
                   <input
                     value={targetRepo}
                     onChange={(event) => setTargetRepo(event.target.value)}
                     required
                   />
                 </label>
+                <p>
+                  DocsHound will write directly when allowed, otherwise it will
+                  automatically reuse or create your fork when you publish.
+                </p>
                 <label>
                   File path <span>optional</span>
                   <input
