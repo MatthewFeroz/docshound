@@ -106,6 +106,7 @@ export interface ApprovedDocument {
 export interface DocumentationChange {
   document_slug: string;
   target_repo: string;
+  publish_repo: string | null;
   base_branch: string;
   branch_name: string;
   file_path: string;
@@ -178,6 +179,7 @@ export interface RuntimeConfig {
   llm_configured: boolean;
   credential_input_enabled: boolean;
   github_configured: boolean;
+  github_server_configured: boolean;
   github_account: string | null;
   github_verified_repo: string | null;
   github_document_fetch_limit: number;

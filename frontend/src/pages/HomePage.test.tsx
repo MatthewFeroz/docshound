@@ -90,7 +90,7 @@ async function connectGitHub(container: HTMLElement) {
       "data-open",
     ),
   );
-  const keyInput = screen.getByLabelText(/fine-grained personal access/i);
+  const keyInput = screen.getByLabelText(/github personal access/i);
   fireEvent.change(keyInput, { target: { value: "github_pat_secret" } });
   fireEvent.click(screen.getByRole("button", { name: /^connect github$/i }));
   await waitFor(() =>
@@ -136,6 +136,7 @@ describe("HomePage live analysis", () => {
       llm_configured: true,
       credential_input_enabled: true,
       github_configured: true,
+      github_server_configured: false,
       github_account: "octocat",
       github_verified_repo: "acme/product",
       github_document_fetch_limit: 100,
@@ -149,6 +150,7 @@ describe("HomePage live analysis", () => {
       llm_configured: true,
       credential_input_enabled: true,
       github_configured: true,
+      github_server_configured: false,
       github_account: "octocat",
       github_verified_repo: "acme/product",
       github_document_fetch_limit: 100,
@@ -162,6 +164,7 @@ describe("HomePage live analysis", () => {
       llm_configured: true,
       credential_input_enabled: true,
       github_configured: true,
+      github_server_configured: false,
       github_account: "octocat",
       github_verified_repo: "acme/product",
       github_document_fetch_limit: 100,
@@ -244,6 +247,7 @@ describe("HomePage live analysis", () => {
       llm_configured: true,
       credential_input_enabled: true,
       github_configured: false,
+      github_server_configured: false,
       github_account: null,
       github_verified_repo: null,
       github_document_fetch_limit: 100,
@@ -265,7 +269,7 @@ describe("HomePage live analysis", () => {
         "data-open",
       ),
     );
-    const keyInput = screen.getByLabelText(/fine-grained personal access/i);
+    const keyInput = screen.getByLabelText(/github personal access/i);
     fireEvent.change(keyInput, { target: { value: "github_pat_secret" } });
     fireEvent.click(screen.getByRole("button", { name: /^connect github$/i }));
 
@@ -277,6 +281,58 @@ describe("HomePage live analysis", () => {
     );
     await waitFor(() => expect(keyInput).toHaveValue(""));
     expect(await screen.findByText(/token connected/i)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /run agent/i })).toBeEnabled(),
+    );
+  });
+
+  it("automatically verifies a server-managed GitHub token", async () => {
+    mocks.getRuntimeConfig.mockResolvedValueOnce({
+      write_enabled: true,
+      llm_gateway: "merge",
+      llm_primary_model: "google/gemini-3.7-flash",
+      llm_fallback_model: "openai/gpt-5.6-luna",
+      llm_configured: true,
+      credential_input_enabled: true,
+      github_configured: true,
+      github_server_configured: true,
+      github_account: null,
+      github_verified_repo: null,
+      github_document_fetch_limit: 100,
+      github_documents_per_finding: 8,
+    });
+    mocks.setGitHubApiKey.mockResolvedValueOnce({
+      write_enabled: true,
+      llm_gateway: "merge",
+      llm_primary_model: "google/gemini-3.7-flash",
+      llm_fallback_model: "openai/gpt-5.6-luna",
+      llm_configured: true,
+      credential_input_enabled: true,
+      github_configured: true,
+      github_server_configured: true,
+      github_account: "octocat",
+      github_verified_repo: "acme/product",
+      github_document_fetch_limit: 100,
+      github_documents_per_finding: 8,
+    });
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/paste your repo/i), {
+      target: { value: "acme/product" },
+    });
+
+    await waitFor(() =>
+      expect(mocks.setGitHubApiKey).toHaveBeenCalledWith("acme/product"),
+    );
+    expect(
+      screen.queryByLabelText(/github personal access/i),
+    ).not.toBeInTheDocument();
+    expect(await screen.findByText(/server token ready/i)).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /run agent/i })).toBeEnabled(),
     );
@@ -338,7 +394,7 @@ describe("HomePage live analysis", () => {
         "data-open",
       ),
     );
-    const keyInput = screen.getByLabelText(/fine-grained personal access/i);
+    const keyInput = screen.getByLabelText(/github personal access/i);
     fireEvent.change(keyInput, { target: { value: "github_pat_in_progress" } });
 
     fireEvent.change(repoInput, { target: { value: "acme/other-product" } });
@@ -584,7 +640,7 @@ describe("HomePage live analysis", () => {
     );
     expect(mocks.resolveSources).not.toHaveBeenCalled();
 
-    const keyInput = screen.getByLabelText(/fine-grained personal access/i);
+    const keyInput = screen.getByLabelText(/github personal access/i);
     const connectButton = screen.getByRole("button", {
       name: /^connect github$/i,
     });

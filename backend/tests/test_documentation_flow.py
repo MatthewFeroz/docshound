@@ -164,6 +164,7 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(created.status, "created")
+        self.assertEqual(created.publish_repo, "acme/docs")
         self.assertEqual(created.pr_number, 87)
         self.assertEqual(created.pr_url, "https://github.com/acme/docs/pull/87")
         branch_request = next(
@@ -187,10 +188,12 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pull_request["base"], "main")
         self.assertIn("Evidence", pull_request["body"])
 
-    async def test_readable_upstream_recommends_writable_fork(self) -> None:
+    async def test_readable_upstream_reuses_writable_fork_automatically(self) -> None:
         self.configured_token.return_value = "connected-token"
+        requests: list[tuple[str, str]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
+            requests.append((request.method, request.url.path))
             if request.url.path == "/repos/upstream/pi":
                 return httpx.Response(
                     200,
@@ -200,6 +203,8 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
                         "permissions": {"push": False},
                     },
                 )
+            if request.url.path == "/repos/upstream/pi/git/trees/main":
+                return httpx.Response(200, json={"tree": []})
             if request.url.path == "/user":
                 return httpx.Response(200, json={"login": "matt"})
             if request.url.path == "/repos/matt/pi":
@@ -213,28 +218,236 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
                         "permissions": {"push": True},
                     },
                 )
+            if request.url.path == "/repos/upstream/pi/git/ref/heads/main":
+                return httpx.Response(200, json={"object": {"sha": "base-sha"}})
+            if (
+                request.method == "POST"
+                and request.url.path == "/repos/matt/pi/git/refs"
+            ):
+                return httpx.Response(201, json={"ref": "refs/heads/docs"})
+            if request.method == "PUT" and request.url.path.startswith(
+                "/repos/matt/pi/contents/"
+            ):
+                return httpx.Response(201, json={"commit": {"sha": "commit-sha"}})
+            if (
+                request.method == "POST"
+                and request.url.path == "/repos/upstream/pi/pulls"
+            ):
+                return httpx.Response(
+                    201,
+                    json={
+                        "number": 12,
+                        "html_url": "https://github.com/upstream/pi/pull/12",
+                    },
+                )
             return httpx.Response(404, json={"message": "not found"})
 
         async with httpx.AsyncClient(
             base_url="https://api.github.test",
             transport=httpx.MockTransport(handler),
         ) as client:
+            change = await prepare_documentation_change(
+                self.document,
+                target_repo="upstream/pi",
+                client=client,
+            )
+            self.assertEqual(change.status, "preview_ready")
+            self.assertNotIn(("GET", "/user"), requests)
+            created = await create_documentation_pull_request(
+                self.document,
+                change,
+                client=client,
+            )
+
+        self.assertEqual(created.status, "created")
+        self.assertEqual(created.target_repo, "upstream/pi")
+        self.assertEqual(created.publish_repo, "matt/pi")
+        self.assertIn(("POST", "/repos/matt/pi/git/refs"), requests)
+        self.assertIn(("POST", "/repos/upstream/pi/pulls"), requests)
+
+    async def test_publish_creates_missing_fork_automatically(self) -> None:
+        self.configured_token.return_value = "connected-token"
+        requests: list[tuple[str, str]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append((request.method, request.url.path))
+            if request.url.path == "/repos/upstream/pi":
+                return httpx.Response(
+                    200,
+                    json={
+                        "full_name": "upstream/pi",
+                        "default_branch": "main",
+                        "permissions": {"push": False},
+                    },
+                )
+            if request.url.path == "/repos/upstream/pi/git/trees/main":
+                return httpx.Response(200, json={"tree": []})
+            if request.url.path == "/user":
+                return httpx.Response(200, json={"login": "matt"})
+            if request.method == "GET" and request.url.path == "/repos/matt/pi":
+                return httpx.Response(404, json={"message": "not found"})
+            if (
+                request.method == "POST"
+                and request.url.path == "/repos/upstream/pi/forks"
+            ):
+                return httpx.Response(
+                    202,
+                    json={
+                        "full_name": "matt/pi",
+                        "fork": True,
+                        "parent": {"full_name": "upstream/pi"},
+                        "permissions": {"push": True},
+                    },
+                )
+            if request.url.path == "/repos/upstream/pi/git/ref/heads/main":
+                return httpx.Response(200, json={"object": {"sha": "base-sha"}})
+            if request.method == "POST" and request.url.path == "/repos/matt/pi/git/refs":
+                return httpx.Response(201, json={"ref": "refs/heads/docs"})
+            if request.method == "PUT" and request.url.path.startswith(
+                "/repos/matt/pi/contents/"
+            ):
+                return httpx.Response(201, json={"commit": {"sha": "commit-sha"}})
+            if request.method == "POST" and request.url.path == "/repos/upstream/pi/pulls":
+                return httpx.Response(
+                    201,
+                    json={
+                        "number": 13,
+                        "html_url": "https://github.com/upstream/pi/pull/13",
+                    },
+                )
+            return httpx.Response(404, json={"message": "not found"})
+
+        async with httpx.AsyncClient(
+            base_url="https://api.github.test",
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            change = await prepare_documentation_change(
+                self.document,
+                target_repo="upstream/pi",
+                client=client,
+            )
+            created = await create_documentation_pull_request(
+                self.document,
+                change,
+                client=client,
+            )
+
+        self.assertEqual(created.publish_repo, "matt/pi")
+        fork_index = requests.index(("POST", "/repos/upstream/pi/forks"))
+        branch_index = requests.index(("POST", "/repos/matt/pi/git/refs"))
+        self.assertLess(fork_index, branch_index)
+
+    async def test_denied_fork_creation_stops_before_branch_write(self) -> None:
+        self.configured_token.return_value = "connected-token"
+        requests: list[tuple[str, str]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append((request.method, request.url.path))
+            if request.url.path == "/repos/upstream/pi":
+                return httpx.Response(
+                    200,
+                    json={
+                        "full_name": "upstream/pi",
+                        "default_branch": "main",
+                        "permissions": {"push": False},
+                    },
+                )
+            if request.url.path == "/repos/upstream/pi/git/trees/main":
+                return httpx.Response(200, json={"tree": []})
+            if request.url.path == "/user":
+                return httpx.Response(200, json={"login": "matt"})
+            if request.method == "GET" and request.url.path == "/repos/matt/pi":
+                return httpx.Response(404, json={"message": "not found"})
+            if (
+                request.method == "POST"
+                and request.url.path == "/repos/upstream/pi/forks"
+            ):
+                return httpx.Response(
+                    403,
+                    json={"message": "Resource not accessible"},
+                )
+            return httpx.Response(404, json={"message": "not found"})
+
+        async with httpx.AsyncClient(
+            base_url="https://api.github.test",
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            change = await prepare_documentation_change(
+                self.document,
+                target_repo="upstream/pi",
+                client=client,
+            )
             with self.assertRaisesRegex(
                 documentation_prs.DocumentationPullRequestError,
-                "Change Documentation repository to matt/pi",
-            ) as raised:
-                await prepare_documentation_change(
+                "Create the fork once on GitHub",
+            ):
+                await create_documentation_pull_request(
                     self.document,
-                    target_repo="upstream/pi",
+                    change,
                     client=client,
                 )
 
-        message = str(raised.exception)
-        self.assertIn("can read upstream/pi", message)
-        self.assertIn("cannot publish there", message)
-        self.assertIn("Contents: read/write", message)
-        self.assertIn("Pull requests: read/write", message)
-        self.assertIn("This attempt did not create a branch", message)
+        self.assertFalse(any(path.endswith("/git/refs") for _, path in requests))
+
+    async def test_cross_fork_branch_links_to_browser_when_pr_api_is_blocked(
+        self,
+    ) -> None:
+        self.configured_token.return_value = "connected-token"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/repos/upstream/pi":
+                return httpx.Response(
+                    200,
+                    json={
+                        "full_name": "upstream/pi",
+                        "default_branch": "main",
+                        "permissions": {"push": False},
+                    },
+                )
+            if request.url.path == "/repos/upstream/pi/git/trees/main":
+                return httpx.Response(200, json={"tree": []})
+            if request.url.path == "/user":
+                return httpx.Response(200, json={"login": "matt"})
+            if request.url.path == "/repos/matt/pi":
+                return httpx.Response(
+                    200,
+                    json={
+                        "full_name": "matt/pi",
+                        "fork": True,
+                        "parent": {"full_name": "upstream/pi"},
+                        "permissions": {"push": True},
+                    },
+                )
+            if request.url.path == "/repos/upstream/pi/git/ref/heads/main":
+                return httpx.Response(200, json={"object": {"sha": "base-sha"}})
+            if request.method == "POST" and request.url.path == "/repos/matt/pi/git/refs":
+                return httpx.Response(201, json={"ref": "refs/heads/docs"})
+            if request.method == "PUT" and request.url.path.startswith(
+                "/repos/matt/pi/contents/"
+            ):
+                return httpx.Response(201, json={"commit": {"sha": "commit-sha"}})
+            if request.method == "POST" and request.url.path == "/repos/upstream/pi/pulls":
+                return httpx.Response(403, json={"message": "Resource not accessible"})
+            return httpx.Response(404, json={"message": "not found"})
+
+        async with httpx.AsyncClient(
+            base_url="https://api.github.test",
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            change = await prepare_documentation_change(
+                self.document,
+                target_repo="upstream/pi",
+                client=client,
+            )
+            created = await create_documentation_pull_request(
+                self.document,
+                change,
+                client=client,
+            )
+
+        self.assertEqual(created.status, "branch_ready")
+        self.assertEqual(created.publish_repo, "matt/pi")
+        self.assertIn("github.com/upstream/pi/compare/main...matt:", created.pr_url)
 
     async def test_branch_permission_error_explains_contents_access(self) -> None:
         self.configured_token.return_value = "connected-token"

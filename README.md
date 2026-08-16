@@ -105,8 +105,11 @@ ALLOWED_ORIGINS=http://localhost:5173
 DOCSHOUND_DB_PATH=     # optional: explicit shared SQLite path
 ```
 
-For pull-request creation, use a fine-grained GitHub token limited to the target
-documentation repositories with Contents and Pull requests read/write access.
+For automatic forks of arbitrary public repositories, use a classic GitHub
+token with the `public_repo` scope. GitHub requires Administration write access
+to create a fork with a fine-grained token, so fine-grained tokens are best for
+direct writes or reusing a fork you already created; give that fork Contents and
+Pull requests read/write access.
 
 ## Frontend configuration
 
@@ -121,14 +124,24 @@ Values prefixed with `VITE_` are public and embedded in the browser bundle.
 Never place Merge Gateway, model-provider, or GitHub credentials in the
 frontend environment.
 
-In local development, the homepage readiness checklist can verify one GitHub
-token for repository research and documentation pull requests, and the model
-connection menu can send a Merge Gateway key to the backend. These overrides
-are held only in backend process memory and cleared on restart. DocsHound
+In local development, a server-managed `GITHUB_TOKEN` is automatically verified
+for the repository entered on the homepage without being sent to or displayed
+in the browser. This is the recommended setup for repeatable demos. When no
+server token is configured, the readiness checklist can accept one GitHub token
+for repository research and documentation pull requests. The model connection
+menu can similarly send a Merge Gateway key to the backend. Browser-provided
+overrides are held only in backend process memory and cleared on restart. DocsHound
 automatically resolves the official documentation repository and folder from
 repository structure, README links, the GitHub homepage, and “Edit this page on
 GitHub” links. The detected source is shown before each run and can be
 overridden.
+
+Pull-request previews always use that upstream documentation repository. Only
+after approval does DocsHound resolve a write destination: it writes directly
+when permitted, otherwise it reuses the connected account's fork or creates one,
+then opens the pull request against upstream. If GitHub permits the fork and
+commit but requires browser confirmation for the cross-fork pull request,
+DocsHound links directly to the prefilled upstream comparison page.
 
 For a confirmed documentation root containing at most 100 Markdown or MDX
 pages, an authenticated run reads the complete corpus before ranking the best

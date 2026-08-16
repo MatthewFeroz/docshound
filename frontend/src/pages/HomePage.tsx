@@ -281,12 +281,13 @@ function hasConnectedGitHubAccess(
   if (!selectedRepo) return false;
   if (browserGitHubConnected) return true;
 
-  // Production deployments can rely on a server-managed token. When browser
-  // credential entry is enabled, require this page to connect a token once for
-  // the local backend session instead of treating stale runtime state as proof.
+  // A server-managed token may be reused without ever sending it to the
+  // browser. Browser-supplied credentials still require an explicit connection
+  // for the current page unless credential entry is disabled.
   return Boolean(
-    runtimeConfig?.credential_input_enabled === false &&
-    runtimeConfig.github_configured &&
+    runtimeConfig?.github_configured &&
+    (runtimeConfig.github_server_configured ||
+      runtimeConfig.credential_input_enabled === false) &&
     runtimeConfig.github_verified_repo?.toLowerCase() ===
       selectedRepo.toLowerCase(),
   );
@@ -321,6 +322,7 @@ export function HomePage() {
   const [githubKeyMessage, setGitHubKeyMessage] = useState<string | null>(null);
   const [githubKeyError, setGitHubKeyError] = useState<string | null>(null);
   const [browserGitHubConnected, setBrowserGitHubConnected] = useState(false);
+  const [verifyingServerGitHub, setVerifyingServerGitHub] = useState(false);
   const [sourceResolution, setSourceResolution] =
     useState<SourceResolution | null>(null);
   const [documentationSource, setDocumentationSource] =
@@ -378,7 +380,7 @@ export function HomePage() {
     }
     const apiKey = githubKey.trim();
     if (!apiKey) {
-      setGitHubKeyError("Enter a fine-grained GitHub access token.");
+      setGitHubKeyError("Enter a GitHub personal access token.");
       return;
     }
 
@@ -538,6 +540,47 @@ export function HomePage() {
       displayedGaps.length === 0),
   );
   const selectedRepo = repositorySlug(repo);
+
+  useEffect(() => {
+    if (
+      !selectedRepo ||
+      !runtimeConfig?.github_server_configured ||
+      runtimeConfig.github_verified_repo?.toLowerCase() ===
+        selectedRepo.toLowerCase()
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    setVerifyingServerGitHub(true);
+    setGitHubKeyError(null);
+    void api
+      .setGitHubApiKey(selectedRepo)
+      .then((config) => {
+        if (cancelled) return;
+        setRuntimeConfig(config);
+      })
+      .catch((credentialError: unknown) => {
+        if (cancelled) return;
+        setGitHubKeyError(
+          credentialError instanceof Error
+            ? credentialError.message
+            : "Could not verify the server-managed GitHub token.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setVerifyingServerGitHub(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    runtimeConfig?.github_server_configured,
+    runtimeConfig?.github_verified_repo,
+    selectedRepo,
+  ]);
+
   const repoReady = selectedRepo !== null;
   const githubReady = hasConnectedGitHubAccess(
     selectedRepo,
@@ -771,80 +814,119 @@ export function HomePage() {
                           {!repoReady
                             ? "Paste a repository before connecting"
                             : githubReady
-                              ? `${runtimeConfig?.github_account || "GitHub"} · token connected`
-                              : "Connect one GitHub token"}
+                              ? `${runtimeConfig?.github_account || "GitHub"} · ${runtimeConfig?.github_server_configured ? "server token ready" : "token connected"}`
+                              : runtimeConfig?.github_server_configured
+                                ? verifyingServerGitHub
+                                  ? "Verifying server token…"
+                                  : "Server token configured"
+                                : "Connect one GitHub token"}
                         </small>
                       </span>
                       <span className="readiness-action">
-                        {githubReady ? "READY" : "WAITING"}
+                        {githubReady
+                          ? "READY"
+                          : verifyingServerGitHub
+                            ? "CHECKING"
+                            : "WAITING"}
                       </span>
                     </AccordionTrigger>
                     <AccordionContent>
-                      <form
-                        className="github-connect-panel"
-                        onSubmit={saveGitHubKey}
-                      >
-                        <label htmlFor="github-access-key">
-                          Fine-grained personal access token
-                        </label>
-                        <input
-                          id="github-access-key"
-                          name="githubAccessKey"
-                          type="password"
-                          value={githubKey}
-                          onChange={(event) => setGitHubKey(event.target.value)}
-                          placeholder="github_pat_…"
-                          autoComplete="off"
-                          spellCheck={false}
-                          required
-                          disabled={
-                            runtimeConfig?.credential_input_enabled === false ||
-                            savingGitHubKey
-                          }
-                        />
-                        {runtimeConfig?.credential_input_enabled === false ? (
-                          <div
-                            className="connection-feedback is-error"
-                            role="alert"
-                          >
-                            Browser key entry is disabled in production.
-                            Configure GITHUB_TOKEN on the server.
-                          </div>
-                        ) : null}
-                        {githubKeyMessage ? (
+                      {runtimeConfig?.github_server_configured ? (
+                        <div className="github-connect-panel">
                           <div className="connection-feedback" role="status">
-                            {githubKeyMessage}
+                            {verifyingServerGitHub
+                              ? "Verifying the server-managed GitHub token for this repository…"
+                              : githubReady
+                                ? `Server-managed token ready for ${runtimeConfig.github_account || "the connected GitHub account"}. The token is never sent to the browser.`
+                                : "A server-managed GitHub token is configured. Enter a repository and DocsHound will verify access without sending the token to the browser."}
                           </div>
-                        ) : null}
-                        {githubKeyError ? (
-                          <div
-                            className="connection-feedback is-error"
-                            role="alert"
-                          >
-                            {githubKeyError}
-                          </div>
-                        ) : null}
-                        <div className="github-connect-actions">
-                          <a
-                            href="https://github.com/settings/personal-access-tokens/new"
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Create token ↗
-                          </a>
-                          <button
-                            type="submit"
-                            disabled={
-                              !repoReady ||
-                              !githubKey.trim() ||
-                              savingGitHubKey ||
-                              runtimeConfig?.credential_input_enabled === false
-                            }
-                          >
-                            {savingGitHubKey ? "Verifying…" : "Connect GitHub"}
-                          </button>
+                          {githubKeyError ? (
+                            <div
+                              className="connection-feedback is-error"
+                              role="alert"
+                            >
+                              {githubKeyError}
+                            </div>
+                          ) : null}
                         </div>
-                      </form>
+                      ) : (
+                        <form
+                          className="github-connect-panel"
+                          onSubmit={saveGitHubKey}
+                        >
+                          <label htmlFor="github-access-key">
+                            GitHub personal access token
+                          </label>
+                          <input
+                            id="github-access-key"
+                            name="githubAccessKey"
+                            type="password"
+                            value={githubKey}
+                            onChange={(event) =>
+                              setGitHubKey(event.target.value)
+                            }
+                            placeholder="ghp_… or github_pat_…"
+                            autoComplete="off"
+                            spellCheck={false}
+                            required
+                            disabled={
+                              runtimeConfig?.credential_input_enabled ===
+                                false || savingGitHubKey
+                            }
+                          />
+                          <p className="connection-feedback">
+                            For automatic forks of public repositories you do
+                            not own, use a classic token with the public_repo
+                            scope. Fine-grained tokens can reuse forks you have
+                            already created.
+                          </p>
+                          {runtimeConfig?.credential_input_enabled === false ? (
+                            <div
+                              className="connection-feedback is-error"
+                              role="alert"
+                            >
+                              Browser key entry is disabled in production.
+                              Configure GITHUB_TOKEN on the server.
+                            </div>
+                          ) : null}
+                          {githubKeyMessage ? (
+                            <div className="connection-feedback" role="status">
+                              {githubKeyMessage}
+                            </div>
+                          ) : null}
+                          {githubKeyError ? (
+                            <div
+                              className="connection-feedback is-error"
+                              role="alert"
+                            >
+                              {githubKeyError}
+                            </div>
+                          ) : null}
+                          <div className="github-connect-actions">
+                            <a
+                              href="https://github.com/settings/tokens/new?scopes=public_repo&description=DocsHound"
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Create public-repo token ↗
+                            </a>
+                            <button
+                              type="submit"
+                              disabled={
+                                !repoReady ||
+                                !githubKey.trim() ||
+                                savingGitHubKey ||
+                                runtimeConfig?.credential_input_enabled ===
+                                  false
+                              }
+                            >
+                              {savingGitHubKey
+                                ? "Verifying…"
+                                : "Connect GitHub"}
+                            </button>
+                          </div>
+                        </form>
+                      )}
                     </AccordionContent>
                   </AccordionItem>
                   <AccordionItem

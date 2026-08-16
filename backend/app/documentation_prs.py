@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import difflib
 import json
@@ -30,6 +31,7 @@ class DocumentationPullRequestError(RuntimeError):
 class DocumentationChange:
     document_slug: str
     target_repo: str
+    publish_repo: str | None
     base_branch: str
     branch_name: str
     file_path: str
@@ -65,8 +67,6 @@ async def prepare_documentation_change(
             target_repo=target_repo,
             operation="read_repository",
         )
-        if token:
-            await _ensure_publish_access(github, target_repo, repository)
         base_branch = str(repository.get("default_branch") or "main")
         tree = await _request_json(
             github,
@@ -126,6 +126,7 @@ async def prepare_documentation_change(
     change = DocumentationChange(
         document_slug=document.slug,
         target_repo=target_repo,
+        publish_repo=None,
         base_branch=base_branch,
         branch_name=_branch_name(document),
         file_path=file_path,
@@ -172,7 +173,18 @@ async def create_documentation_pull_request(
                 target_repo=change.target_repo,
                 operation="read_repository",
             )
-            await _ensure_publish_access(github, change.target_repo, repository)
+            publish_repo = await _resolve_publish_repository(
+                github,
+                change.target_repo,
+                repository,
+            )
+            change = replace(
+                change,
+                publish_repo=publish_repo,
+                error=None,
+                updated_at=datetime.now(timezone.utc).isoformat(),
+            )
+            save_documentation_change(change)
             base_ref = await _request_json(
                 github,
                 "GET",
@@ -192,12 +204,12 @@ async def create_documentation_pull_request(
                 await _request_json(
                     github,
                     "POST",
-                    f"/repos/{change.target_repo}/git/refs",
+                    f"/repos/{publish_repo}/git/refs",
                     json_body={
                         "ref": f"refs/heads/{change.branch_name}",
                         "sha": base_sha,
                     },
-                    target_repo=change.target_repo,
+                    target_repo=publish_repo,
                     operation="create_branch",
                 )
             except DocumentationPullRequestError as exc:
@@ -207,17 +219,18 @@ async def create_documentation_pull_request(
                 await _request_json(
                     github,
                     "GET",
-                    f"/repos/{change.target_repo}/git/ref/heads/"
+                    f"/repos/{publish_repo}/git/ref/heads/"
                     f"{quote(change.branch_name, safe='')}",
-                    target_repo=change.target_repo,
+                    target_repo=publish_repo,
                     operation="read_branch",
                 )
 
             branch_file_sha = change.existing_sha
             branch_content: str | None = None
             if branch_already_exists:
+                branch_file_sha = None
                 response = await github.get(
-                    f"/repos/{change.target_repo}/contents/"
+                    f"/repos/{publish_repo}/contents/"
                     f"{quote(change.file_path, safe='/')}",
                     params={"ref": change.branch_name},
                 )
@@ -230,7 +243,7 @@ async def create_documentation_pull_request(
                 elif response.status_code != 404:
                     await _raise_for_github_response(
                         response,
-                        target_repo=change.target_repo,
+                        target_repo=publish_repo,
                         operation="read_branch_file",
                     )
 
@@ -247,14 +260,14 @@ async def create_documentation_pull_request(
                 await _request_json(
                     github,
                     "PUT",
-                    f"/repos/{change.target_repo}/contents/"
+                    f"/repos/{publish_repo}/contents/"
                     f"{quote(change.file_path, safe='/')}",
                     json_body=content_payload,
-                    target_repo=change.target_repo,
+                    target_repo=publish_repo,
                     operation="write_contents",
                 )
 
-            owner = change.target_repo.split("/", 1)[0]
+            owner = publish_repo.split("/", 1)[0]
             pr_payload = {
                 "title": f"docs: {document.title}",
                 "head": f"{owner}:{change.branch_name}",
@@ -272,6 +285,20 @@ async def create_documentation_pull_request(
                 )
             except DocumentationPullRequestError as exc:
                 if exc.status_code != 422:
+                    if exc.status_code in {403, 404} and publish_repo != change.target_repo:
+                        branch_ready = replace(
+                            change,
+                            status="branch_ready",
+                            pr_url=_upstream_pull_request_url(change, owner),
+                            error=(
+                                "The documentation branch is ready in "
+                                f"{publish_repo}. GitHub requires you to confirm the "
+                                "upstream pull request in the browser."
+                            ),
+                            updated_at=datetime.now(timezone.utc).isoformat(),
+                        )
+                        save_documentation_change(branch_ready)
+                        return branch_ready
                     raise
                 existing = await _request_json(
                     github,
@@ -323,12 +350,13 @@ def save_documentation_change(change: DocumentationChange) -> None:
         connection.execute(
             """
             INSERT INTO documentation_changes (
-                document_slug, target_repo, base_branch, branch_name, file_path,
-                file_format, detected_by, edit_action, content, patch, existing_sha,
-                status, pr_number, pr_url, error, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                document_slug, target_repo, publish_repo, base_branch, branch_name,
+                file_path, file_format, detected_by, edit_action, content, patch,
+                existing_sha, status, pr_number, pr_url, error, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(document_slug) DO UPDATE SET
                 target_repo = excluded.target_repo,
+                publish_repo = excluded.publish_repo,
                 base_branch = excluded.base_branch,
                 branch_name = excluded.branch_name,
                 file_path = excluded.file_path,
@@ -347,6 +375,7 @@ def save_documentation_change(change: DocumentationChange) -> None:
             (
                 change.document_slug,
                 change.target_repo,
+                change.publish_repo,
                 change.base_branch,
                 change.branch_name,
                 change.file_path,
@@ -507,6 +536,15 @@ def _branch_name(document: ApprovedDocument) -> str:
     return f"docshound/{_slugify(document.title)[:38]}-{document.run_id[:8]}"
 
 
+def _upstream_pull_request_url(change: DocumentationChange, owner: str) -> str:
+    base = quote(change.base_branch, safe="")
+    head = quote(f"{owner}:{change.branch_name}", safe=":/")
+    return (
+        f"https://github.com/{change.target_repo}/compare/"
+        f"{base}...{head}?expand=1"
+    )
+
+
 def _validate_repo(repo: str) -> str:
     cleaned = repo.strip()
     if not REPO_PATTERN.fullmatch(cleaned):
@@ -535,14 +573,14 @@ def _yaml_string(value: str) -> str:
     return json.dumps(compact, ensure_ascii=False)
 
 
-async def _ensure_publish_access(
+async def _resolve_publish_repository(
     github: httpx.AsyncClient,
     target_repo: str,
     repository: dict,
-) -> None:
+) -> str:
     permissions = repository.get("permissions") or {}
     if permissions.get("push") is True:
-        return
+        return str(repository.get("full_name") or target_repo)
 
     account_payload = await _request_json(
         github,
@@ -554,21 +592,40 @@ async def _ensure_publish_access(
     account = str(account_payload.get("login") or "the connected GitHub account")
     suggested_repo = await _find_writable_fork(github, target_repo, account)
     if suggested_repo:
+        return suggested_repo
+
+    candidate = f"{account}/{target_repo.split('/', 1)[1]}"
+    response = await github.post(
+        f"/repos/{target_repo}/forks",
+        json={"default_branch_only": True},
+    )
+    if response.status_code >= 400 and response.status_code != 422:
+        detail = _response_detail(response)
         raise DocumentationPullRequestError(
-            f"DocsHound can read {target_repo}, but the connected GitHub account "
-            f"{account} cannot publish there. Change Documentation repository to "
-            f"{suggested_repo}, refresh the preview, and try again. The connected "
-            "token must grant Contents: read/write and Pull requests: read/write "
-            "for the destination repository. This attempt did not create a branch "
-            "or pull request."
+            f"DocsHound could not create a fork of {target_repo} for {account} "
+            f"({response.status_code}: {detail}). Create the fork once on GitHub or "
+            "reconnect a token that permits fork creation; DocsHound will detect and "
+            "reuse it automatically on the next attempt. No branch was created.",
+            status_code=response.status_code,
         )
+
+    payload = response.json() if response.content else {}
+    candidate = str(payload.get("full_name") or candidate)
+    if _is_writable_related_fork(payload, target_repo):
+        return candidate
+
+    for _attempt in range(12):
+        fork_response = await github.get(f"/repos/{candidate}")
+        if fork_response.status_code == 200:
+            fork_payload = fork_response.json()
+            if _is_writable_related_fork(fork_payload, target_repo):
+                return str(fork_payload.get("full_name") or candidate)
+        await asyncio.sleep(0.5)
+
     raise DocumentationPullRequestError(
-        f"DocsHound can read {target_repo}, but the connected GitHub account "
-        f"{account} cannot publish there. Choose a fork or repository where "
-        f"{account} has write access, refresh the preview, and try again. The "
-        "connected token must include that destination and grant Contents: "
-        "read/write and Pull requests: read/write. No branch or pull request was "
-        "created by this attempt."
+        f"GitHub is still preparing the fork of {target_repo} at {candidate}. Wait "
+        "a moment and click publish again; DocsHound will reuse the fork without "
+        "creating another one. No branch was created."
     )
 
 
@@ -586,17 +643,32 @@ async def _find_writable_fork(
     if response.status_code != 200:
         return None
     payload = response.json()
-    permissions = payload.get("permissions") or {}
-    if permissions.get("push") is not True:
-        return None
+    if _is_writable_related_fork(payload, target_repo):
+        return str(payload.get("full_name") or candidate)
+    return None
 
+
+def _is_writable_related_fork(payload: dict, target_repo: str) -> bool:
+    permissions = payload.get("permissions") or {}
     related_repositories = {
         str((payload.get(relation) or {}).get("full_name") or "").lower()
         for relation in ("parent", "source")
     }
-    if payload.get("fork") is True and target_repo.lower() in related_repositories:
-        return str(payload.get("full_name") or candidate)
-    return None
+    return (
+        payload.get("fork") is True
+        and permissions.get("push") is True
+        and target_repo.lower() in related_repositories
+    )
+
+
+def _response_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text[:160] or "request failed"
+    if isinstance(payload, dict) and payload.get("message"):
+        return str(payload["message"])
+    return "request failed"
 
 
 @asynccontextmanager
@@ -731,6 +803,7 @@ def _connect() -> Iterator[sqlite3.Connection]:
             CREATE TABLE IF NOT EXISTS documentation_changes (
                 document_slug TEXT PRIMARY KEY,
                 target_repo TEXT NOT NULL,
+                publish_repo TEXT,
                 base_branch TEXT NOT NULL,
                 branch_name TEXT NOT NULL,
                 file_path TEXT NOT NULL,
@@ -758,6 +831,10 @@ def _connect() -> Iterator[sqlite3.Connection]:
                 "ALTER TABLE documentation_changes "
                 "ADD COLUMN edit_action TEXT NOT NULL DEFAULT 'create_page'"
             )
+        if "publish_repo" not in columns:
+            connection.execute(
+                "ALTER TABLE documentation_changes ADD COLUMN publish_repo TEXT"
+            )
         yield connection
 
 
@@ -765,6 +842,7 @@ def _change_from_row(row: sqlite3.Row) -> DocumentationChange:
     return DocumentationChange(
         document_slug=row["document_slug"],
         target_repo=row["target_repo"],
+        publish_repo=row["publish_repo"],
         base_branch=row["base_branch"],
         branch_name=row["branch_name"],
         file_path=row["file_path"],
