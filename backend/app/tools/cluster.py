@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from app.demo_scenarios import pinned_issue_relationships
 from app.llm import complete_json, llm_is_configured, require_json_array
+from app.markdown_sections import without_generated_sources
 from app.state import GapCluster, Issue, PullRequest
 from app.tracing import publish_span_progress
 
@@ -953,10 +954,7 @@ def _replace_resolution_section(markdown: str, resolution: str) -> str:
 
 
 def _remove_generated_source_section(markdown: str) -> str:
-    for heading in ("## Sources", "## Source GitHub issues", "## Source issues"):
-        if heading in markdown:
-            return markdown.split(heading, 1)[0].rstrip()
-    return markdown.strip()
+    return without_generated_sources(markdown)
 
 
 def _source_links(
