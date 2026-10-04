@@ -250,6 +250,10 @@ takes precedence. Set
 
 The database includes completed runs, findings, approved document revisions,
 prepared patches, and created pull-request metadata.
+The backend cancels and finalizes its active runs during shutdown. At startup it
+marks saved runs interrupted by a previous process as failed, preserving their
+partial results, event history, and usage. Start a new run to retry an interrupted
+scan.
 
 SQLite and the in-process event stream are appropriate for a single backend
 replica. A multi-replica deployment should use shared persistence and event

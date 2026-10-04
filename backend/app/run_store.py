@@ -1,9 +1,10 @@
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
 from app.database import DB_PATH, database_connection
+from app.run_outcomes import apply_run_outcome
 from app.state import AgentState
 
 
@@ -46,6 +47,35 @@ def load_runs(limit: int = 50) -> list[AgentState]:
             (limit,),
         ).fetchall()
     return [AgentState.model_validate_json(row["state_json"]) for row in rows]
+
+
+def recover_interrupted_runs(active_run_ids: Collection[str] = ()) -> list[AgentState]:
+    """Finish orphaned runs once the single backend instance starts."""
+    recovered = []
+    now = datetime.now(UTC).isoformat()
+    with _connect() as connection:
+        rows = connection.execute(
+            "SELECT run_id, state_json FROM runs WHERE status = 'running'"
+        ).fetchall()
+        for row in rows:
+            if row["run_id"] in active_run_ids:
+                continue
+            state = AgentState.model_validate_json(row["state_json"])
+            state.status = "failed"
+            state.errors.append(
+                "The backend restarted before this run completed. "
+                "Start a new run to try again."
+            )
+            apply_run_outcome(state)
+            connection.execute(
+                """
+                UPDATE runs SET status = ?, state_json = ?, updated_at = ?
+                WHERE run_id = ? AND status = 'running'
+                """,
+                (state.status, state.model_dump_json(), now, state.run_id),
+            )
+            recovered.append(state)
+    return recovered
 
 
 @contextmanager

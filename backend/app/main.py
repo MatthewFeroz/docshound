@@ -1,6 +1,8 @@
 import asyncio
 import json
+import logging
 import re
+from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Response
@@ -9,7 +11,7 @@ from fastapi.responses import RedirectResponse
 from sse_starlette.sse import EventSourceResponse
 
 from app import events
-from app.agent import run_agent
+from app.agent import finalize_run, run_agent
 from app.api_models import (
     ApproveFindingRequest,
     CreateRunRequest,
@@ -40,7 +42,7 @@ from app.documentation_prs import (
 )
 from app.llm import get_llm_route
 from app.run_outcomes import apply_run_outcome
-from app.run_store import load_run, load_runs, save_run
+from app.run_store import load_run, load_runs, recover_interrupted_runs, save_run
 from app.runtime_credentials import (
     get_github_api_token,
     get_github_connection,
@@ -59,10 +61,33 @@ from app.tools.docs import (
 )
 from app.tools.github import GitHubToolError, validate_github_access
 
+logger = logging.getLogger(__name__)
+BACKGROUND_TASKS: set[asyncio.Task[AgentState]] = set()
+ACTIVE_RUN_IDS: set[str] = set()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    for recovered_run in recover_interrupted_runs(ACTIVE_RUN_IDS):
+        RUNS[recovered_run.run_id] = recovered_run
+        events.close(recovered_run.run_id)
+    for persisted_run in load_runs():
+        if persisted_run.run_id not in ACTIVE_RUN_IDS:
+            RUNS[persisted_run.run_id] = persisted_run
+    try:
+        yield
+    finally:
+        tasks = tuple(BACKGROUND_TASKS)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 app = FastAPI(
     title="DocsHound API",
     version="1.0.0",
     description="JSON and SSE API for the DocsHound frontend.",
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,
@@ -73,10 +98,6 @@ app.add_middleware(
 )
 
 REPO_PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
-BACKGROUND_TASKS: set[asyncio.Task[AgentState]] = set()
-
-for persisted_run in load_runs():
-    RUNS.setdefault(persisted_run.run_id, persisted_run)
 
 
 def _get_run_state(run_id: str) -> AgentState | None:
@@ -227,8 +248,31 @@ def _start_run(request: RunRequest) -> AgentState:
     save_run(state)
     task = asyncio.create_task(run_agent(request, state=state))
     BACKGROUND_TASKS.add(task)
-    task.add_done_callback(BACKGROUND_TASKS.discard)
+    ACTIVE_RUN_IDS.add(state.run_id)
+    task.add_done_callback(lambda completed: _run_finished(state.run_id, completed))
     return state
+
+
+def _run_finished(run_id: str, task: asyncio.Task[AgentState]) -> None:
+    BACKGROUND_TASKS.discard(task)
+    ACTIVE_RUN_IDS.discard(run_id)
+    cancelled = task.cancelled()
+    failure = None if cancelled else task.exception()
+    state = RUNS.get(run_id)
+    if (
+        state is not None
+        and state.status == "running"
+        and (cancelled or failure is not None)
+    ):
+        state.status = "failed"
+        state.errors.append(
+            "The run was cancelled before completion."
+            if cancelled
+            else "The run stopped unexpectedly before completion."
+        )
+        finalize_run(state)
+    if failure is not None:
+        logger.error("Background run %s stopped unexpectedly", run_id)
 
 
 @app.get("/health")
