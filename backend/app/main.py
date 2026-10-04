@@ -272,7 +272,7 @@ def _run_finished(run_id: str, task: asyncio.Task[AgentState]) -> None:
         )
         finalize_run(state)
     if failure is not None:
-        logger.error("Background run %s stopped unexpectedly", run_id)
+        logger.error("Background run %s stopped unexpectedly", run_id, exc_info=failure)
 
 
 @app.get("/health")

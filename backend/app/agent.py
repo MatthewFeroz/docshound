@@ -142,7 +142,7 @@ def finalize_run(state: AgentState) -> None:
         state.status = "failed"
         state.errors.append("Could not save the final run state.")
         apply_run_outcome(state)
-        logger.error("Could not save final state for run %s", state.run_id)
+        logger.exception("Could not save final state for run %s", state.run_id)
 
     try:
         events.publish(
