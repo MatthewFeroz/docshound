@@ -98,12 +98,17 @@ export function MarkdownEditor({
               "copy",
               "Copy",
               "Copy Markdown",
-              (editor) => {
-                void navigator.clipboard.writeText(editor.value()).then(
-                  () => setFeedback("Markdown copied."),
-                  () =>
-                    setFeedback("Select the text and press Ctrl+C to copy."),
-                );
+              async (editor) => {
+                try {
+                  await navigator.clipboard.writeText(editor.value());
+                  setFeedback("Markdown copied.");
+                } catch {
+                  editor.codemirror.focus();
+                  editor.codemirror.execCommand("selectAll");
+                  setFeedback(
+                    "Markdown selected. Use your keyboard's copy shortcut.",
+                  );
+                }
               },
               true,
             ),
