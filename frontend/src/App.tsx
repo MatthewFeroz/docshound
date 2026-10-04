@@ -1,8 +1,8 @@
-import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Component, lazy, Suspense, type ReactNode } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import "easymde/dist/easymde.min.css";
 
-import { Loading } from "./components/Status";
+import { ErrorMessage, Loading } from "./components/Status";
 import { HomePage } from "./pages/HomePage";
 
 const DocumentPage = lazy(() =>
@@ -29,25 +29,53 @@ const PullRequestPage = lazy(() =>
   })),
 );
 
+// A page chunk can fail to load, for example after a redeploy replaces it.
+class PageLoadBoundary extends Component<
+  { children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (this.state.failed)
+      return (
+        <main>
+          <ErrorMessage message="This page could not be loaded. Reload the page to try again." />
+        </main>
+      );
+    return this.props.children;
+  }
+}
+
 export default function App() {
+  const { pathname } = useLocation();
   return (
-    <Suspense fallback={<Loading label="Loading page…" />}>
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route
-          path="/showcase"
-          element={<Navigate to="/#overview" replace />}
-        />
-        <Route path="/usage" element={<UsagePage />} />
-        <Route path="/findings" element={<FindingsPage />} />
-        <Route path="/runs/:runId/findings/:index" element={<FindingPage />} />
-        <Route path="/documents/:slug" element={<DocumentPage />} />
-        <Route
-          path="/documents/:slug/pull-request"
-          element={<PullRequestPage />}
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </Suspense>
+    <PageLoadBoundary key={pathname}>
+      <Suspense fallback={<Loading label="Loading page…" />}>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route
+            path="/showcase"
+            element={<Navigate to="/#overview" replace />}
+          />
+          <Route path="/usage" element={<UsagePage />} />
+          <Route path="/findings" element={<FindingsPage />} />
+          <Route
+            path="/runs/:runId/findings/:index"
+            element={<FindingPage />}
+          />
+          <Route path="/documents/:slug" element={<DocumentPage />} />
+          <Route
+            path="/documents/:slug/pull-request"
+            element={<PullRequestPage />}
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
+    </PageLoadBoundary>
   );
 }
