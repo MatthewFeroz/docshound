@@ -1,5 +1,4 @@
 import asyncio
-import ipaddress
 import re
 import time
 from collections import deque
@@ -13,6 +12,7 @@ import httpx
 
 from app.config import get_settings
 from app.runtime_credentials import get_github_api_token
+from app.tools.public_web import fetch_public_text, public_url_parts
 
 MAX_DOCUMENT_URLS = 40
 MAX_SITEMAPS = 8
@@ -299,19 +299,20 @@ async def fetch_document_page(
         return cached[1]
 
     try:
-        response = await client.get(normalized)
-        response.raise_for_status()
+        response = await fetch_public_text(
+            client, normalized, max_bytes=500_000, truncate=True
+        )
     except Exception:
         _PAGE_CACHE[normalized] = (time.monotonic(), None)
         return None
 
-    final_url = _normalize_public_url(str(response.url))
+    final_url = _normalize_public_url(response.url)
     if not final_url:
         _PAGE_CACHE[normalized] = (time.monotonic(), None)
         return None
 
-    content_type = response.headers.get("content-type", "").lower()
-    raw = response.text[:500_000]
+    content_type = response.content_type
+    raw = response.text
     if "html" in content_type or "<html" in raw[:500].lower():
         parser = _ReadableHTMLParser()
         parser.feed(raw)
@@ -379,11 +380,10 @@ async def _fetch_text(client: httpx.AsyncClient, url: str) -> str | None:
     if not normalized:
         return None
     try:
-        response = await client.get(normalized)
-        response.raise_for_status()
+        response = await fetch_public_text(client, normalized, max_bytes=2_000_000)
     except Exception:
         return None
-    return response.text[:2_000_000]
+    return response.text
 
 
 def _filter_document_urls(urls: list[str], docs_root: str) -> list[str]:
@@ -448,24 +448,8 @@ def _locale_after_scope(path: str, scope: str) -> str | None:
 
 def _normalize_public_url(url: str) -> str | None:
     try:
-        parsed = urlparse(url.strip())
+        parsed = public_url_parts(url.strip())
     except ValueError:
-        return None
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        return None
-    hostname = parsed.hostname.lower()
-    if hostname == "localhost" or hostname.endswith(".localhost"):
-        return None
-    try:
-        address = ipaddress.ip_address(hostname)
-    except ValueError:
-        address = None
-    if address and (
-        address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_reserved
-    ):
         return None
     clean, _ = urldefrag(urlunparse(parsed._replace(query="")))
     return clean.rstrip("/") or clean

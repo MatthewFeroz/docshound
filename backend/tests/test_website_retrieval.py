@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import httpx
@@ -45,6 +46,12 @@ def _gap() -> GapCluster:
 class SitemapDiscoveryTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         docs_discovery._PAGE_CACHE.clear()
+        resolver = patch(
+            "app.tools.public_web._resolve_addresses",
+            AsyncMock(return_value=["8.8.8.8"]),
+        )
+        resolver.start()
+        self.addCleanup(resolver.stop)
 
     def test_parses_urlsets_and_sitemap_indexes(self) -> None:
         page_urls, child_sitemaps = parse_sitemap_document(
