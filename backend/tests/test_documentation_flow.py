@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import httpx2 as httpx
 
-from app import documentation_prs, run_store
+from app import approved_documents, documentation_prs, run_store
 from app.approved_documents import ApprovedDocument
 from app.documentation_prs import (
     create_documentation_pull_request,
@@ -21,7 +21,9 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_change_db = documentation_prs.DB_PATH
+        self.original_document_db = approved_documents.DB_PATH
         documentation_prs.DB_PATH = Path(self.temp_dir.name) / "changes.db"
+        approved_documents.DB_PATH = documentation_prs.DB_PATH
         self.configured_token_patcher = patch(
             "app.documentation_prs.configured_github_token",
             return_value=None,
@@ -54,6 +56,7 @@ class DocumentationFlowTests(unittest.IsolatedAsyncioTestCase):
     def tearDown(self) -> None:
         self.configured_token_patcher.stop()
         documentation_prs.DB_PATH = self.original_change_db
+        approved_documents.DB_PATH = self.original_document_db
         self.temp_dir.cleanup()
 
     def test_write_enabled_uses_the_connected_token(self) -> None:

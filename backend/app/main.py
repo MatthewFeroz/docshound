@@ -14,6 +14,7 @@ from app.api_models import (
     ApproveFindingRequest,
     CreateRunRequest,
     CreateRunResponse,
+    DocumentationChangeResponse,
     DocumentResponse,
     FindingResponse,
     GitHubCredentialRequest,
@@ -33,8 +34,11 @@ from app.approved_documents import (
 from app.config import get_settings
 from app.documentation_prs import (
     DocumentationPullRequestError,
+    StaleDocumentationPreviewError,
     create_documentation_pull_request,
+    document_fingerprint,
     get_documentation_change,
+    invalidate_documentation_preview,
     prepare_documentation_change,
     write_enabled,
 )
@@ -165,7 +169,7 @@ def _finding_response(state: AgentState, index: int) -> FindingResponse:
     documentation_change = None
     if approved_document:
         cluster.approved_document_slug = approved_document.slug
-        documentation_change = get_documentation_change(approved_document.slug)
+        documentation_change = _documentation_change_response(approved_document)
 
     return FindingResponse(
         run_id=state.run_id,
@@ -196,6 +200,19 @@ def _finding_response(state: AgentState, index: int) -> FindingResponse:
     )
 
 
+def _documentation_change_response(
+    document: ApprovedDocument,
+) -> DocumentationChangeResponse | None:
+    change = get_documentation_change(document.slug)
+    if change is None:
+        return None
+    return DocumentationChangeResponse.model_validate(change).model_copy(
+        update={
+            "is_current": change.document_fingerprint == document_fingerprint(document)
+        }
+    )
+
+
 def _document_response(document: ApprovedDocument) -> DocumentResponse:
     state = _get_run_state(document.run_id)
     coverage = None
@@ -204,7 +221,7 @@ def _document_response(document: ApprovedDocument) -> DocumentResponse:
     return DocumentResponse(
         document=document,
         body_markdown=document_body_markdown(document.markdown),
-        documentation_change=get_documentation_change(document.slug),
+        documentation_change=_documentation_change_response(document),
         suggested_file_path=coverage.recommended_path if coverage else None,
         suggested_action=coverage.recommended_action if coverage else None,
         suggested_target_repo=(
@@ -559,6 +576,7 @@ async def approve_finding(
         ],
     )
     cluster.draft_markdown = document.markdown
+    invalidate_documentation_preview(document)
     cluster.review_status = "approved"
     cluster.approved_document_slug = document.slug
     save_run(state)
@@ -651,7 +669,8 @@ async def create_documentation_pull_request_route(slug: str) -> DocumentResponse
     try:
         await create_documentation_pull_request(document, change)
     except DocumentationPullRequestError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        status_code = 409 if isinstance(exc, StaleDocumentationPreviewError) else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     return _document_response(document)
 
 

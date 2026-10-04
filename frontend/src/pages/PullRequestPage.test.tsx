@@ -54,6 +54,7 @@ const payload: DocumentPayload = {
     error: null,
     created_at: "2026-08-15T00:00:00Z",
     updated_at: "2026-08-15T00:00:00Z",
+    is_current: true,
   },
   suggested_file_path: "docs/theme-cli-override.md",
   suggested_action: "create_page",
@@ -132,5 +133,35 @@ describe("PullRequestPage", () => {
     expect(
       screen.getByRole("link", { name: "Open upstream PR" }),
     ).toHaveAttribute("href", expect.stringContaining("upstream/pi/compare"));
+  });
+
+  it("offers to update a pull request that has an earlier revision", async () => {
+    const created = {
+      ...payload.documentation_change!,
+      status: "created",
+      pr_number: 87,
+      pr_url: "https://github.com/upstream/pi/pull/87",
+    };
+    apiMocks.getDocument.mockResolvedValue({
+      ...payload,
+      documentation_change: { ...created, is_current: false },
+    });
+    apiMocks.previewPullRequest.mockResolvedValue({
+      ...payload,
+      documentation_change: { ...created, status: "preview_ready" },
+    });
+    renderPage();
+
+    expect(
+      await screen.findByText("The approved document changed"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Publish upstream PR" }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByText("The approved document changed"),
+    ).not.toBeInTheDocument();
   });
 });
