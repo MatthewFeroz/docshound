@@ -42,6 +42,13 @@ class DocumentChunkTests(unittest.TestCase):
         chunks = chunk_document(text, max_chars=100, overlap_chars=0)
         self.assertEqual("".join(chunks), text)
 
+    def test_large_overlap_advances_past_a_word_boundary_inside_the_overlap(self):
+        text = "x" * 99 + " " + "z" * 300
+        chunks = chunk_document(text, max_chars=100, overlap_chars=99)
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk) <= 199 for chunk in chunks))
+        self.assertTrue(chunks[-1].endswith("z" * 100))
+
     def test_short_documents_and_sentence_sized_passages_are_unchanged(self):
         self.assertEqual(chunk_document("short"), [])
         text = "Documentation describes credential rotation. " * 20

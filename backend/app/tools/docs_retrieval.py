@@ -139,7 +139,7 @@ def chunk_document(
             # Window those passages rather than truncating all text after the first chunk.
             while len(current) > max_chars + overlap_chars:
                 boundary = current.rfind(" ", 0, max_chars + 1)
-                if boundary < max_chars // 2:
+                if boundary < max_chars // 2 or boundary <= overlap_chars:
                     boundary = max_chars
                 chunks.append(current[:boundary].rstrip())
                 current = current[boundary - overlap_chars :].lstrip()
