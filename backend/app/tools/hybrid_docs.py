@@ -1,5 +1,7 @@
 """Website crawling and hybrid passage retrieval shared by the restored review flow."""
 
+import asyncio
+
 import httpx
 
 from app.config import Settings
@@ -94,8 +96,9 @@ async def rank_evidence(clusters, pages, settings: Settings, per_gap: int):
                     for i, chunks in candidates.items()
                 }
         if settings.nvidia_rerank_enabled:
-            for index, cluster in enumerate(clusters):
-                result = await observe_operation(
+
+            async def rerank(index, cluster):
+                return await observe_operation(
                     "rerank_docs_for_gap",
                     rerank_gap,
                     client,
@@ -103,10 +106,24 @@ async def rank_evidence(clusters, pages, settings: Settings, per_gap: int):
                     candidates.get(index, []),
                     ranked.get(index, []),
                     settings,
+                    per_gap=per_gap,
                     input_summary=cluster.name,
                     output_summary=lambda value: f"{value.status}: {value.reason}",
                     output_details=lambda value: value.details(),
                     trace_outputs=lambda value: value.details(),
                 )
-                ranked[index] = result.chunks
+
+            # Independent gap requests share the client, with at most four in flight.
+            for start in range(0, len(clusters), 4):
+                results = await asyncio.gather(
+                    *(
+                        rerank(index, clusters[index])
+                        for index in range(start, min(start + 4, len(clusters)))
+                    ),
+                    return_exceptions=True,
+                )
+                for index, result in enumerate(results, start=start):
+                    if isinstance(result, BaseException):
+                        raise result
+                    ranked[index] = result.chunks
     return ranked
