@@ -145,7 +145,7 @@ def chunk_document(
                 current = current[boundary - overlap_chars :].lstrip()
     if current:
         chunks.append(current)
-    return [chunk for chunk in chunks if len(chunk) >= 50 or len(chunks) > 1]
+    return [chunk for chunk in chunks if len(chunk) >= 50]
 
 
 def source_confidence(chunk: RetrievedChunk) -> float:

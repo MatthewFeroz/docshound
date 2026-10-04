@@ -37,10 +37,17 @@ class DocumentChunkTests(unittest.TestCase):
         self.assertTrue(all(len(chunk) <= 120 for chunk in chunks))
         self.assertEqual(sum(map(len, chunks)) - 20 * (len(chunks) - 1), 4000)
 
-    def test_small_tail_is_retained_without_overlap(self):
-        text = "a" * 100 + "b" * 100 + "tail"
+    def test_window_tail_is_retained_without_overlap(self):
+        text = "a" * 100 + "b" * 100 + "c" * 60
         chunks = chunk_document(text, max_chars=100, overlap_chars=0)
         self.assertEqual("".join(chunks), text)
+
+    def test_short_fragments_beside_oversized_text_are_dropped(self):
+        text = "Overview\n\n" + "x" * 4000 + "\n\nFooter"
+        chunks = chunk_document(text)
+        self.assertGreater(len(chunks), 1)
+        self.assertNotIn("Overview", chunks)
+        self.assertNotIn("Footer", chunks)
 
     def test_large_overlap_advances_past_a_word_boundary_inside_the_overlap(self):
         text = "x" * 99 + " " + "z" * 300
