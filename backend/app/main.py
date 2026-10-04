@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from contextlib import aclosing
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Response
@@ -476,8 +477,9 @@ async def stream_events(run_id: str) -> EventSourceResponse:
             }
             return
 
-        async for event in events.subscribe(run_id):
-            yield {"data": json.dumps(event)}
+        async with aclosing(events.subscribe(run_id)) as subscription:
+            async for event in subscription:
+                yield {"data": json.dumps(event)}
 
     return EventSourceResponse(event_generator())
 
@@ -502,8 +504,9 @@ async def stream_events_json_legacy(run_id: str) -> EventSourceResponse:
             yield {"event": event["type"], "data": json.dumps(event)}
             return
 
-        async for event in events.subscribe(run_id):
-            yield {"event": event["type"], "data": json.dumps(event)}
+        async with aclosing(events.subscribe(run_id)) as subscription:
+            async for event in subscription:
+                yield {"event": event["type"], "data": json.dumps(event)}
 
     return EventSourceResponse(event_generator())
 
