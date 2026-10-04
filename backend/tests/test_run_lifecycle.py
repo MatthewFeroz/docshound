@@ -295,6 +295,45 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restored.errors[0], "Earlier failure.")
         self.assertEqual(run_store.load_run(terminal.run_id), terminal)
 
+    async def test_unreadable_saved_records_do_not_block_startup_or_valid_recovery(self):
+        for payload in ("{not json", '{"errors": {"message": "old format"}}'):
+            with self.subTest(payload=payload):
+                corrupt = AgentState(repo="acme/broken")
+                orphan = AgentState(repo="acme/product", issues=[self._issue()])
+                terminal = AgentState(repo="acme/other", status="completed")
+                for state in (corrupt, orphan, terminal):
+                    run_store.save_run(state)
+                with run_store._connect() as connection:
+                    connection.execute(
+                        "UPDATE runs SET state_json = ? WHERE run_id = ?",
+                        (payload, corrupt.run_id),
+                    )
+
+                with self.assertLogs("app.run_store", level="WARNING") as logs:
+                    with TestClient(app) as client:
+                        response = client.get(f"/api/v1/runs/{orphan.run_id}")
+                        self.assertEqual(response.status_code, 200)
+                        self.assertEqual(response.json()["status"], "failed")
+                        self.assertEqual(response.json()["issues_scraped"], 1)
+                        self.assertEqual(
+                            client.get(f"/api/v1/runs/{terminal.run_id}").status_code,
+                            200,
+                        )
+                        self.assertEqual(
+                            client.get(f"/api/v1/runs/{corrupt.run_id}").status_code,
+                            404,
+                        )
+                self.assertTrue(any(corrupt.run_id in line for line in logs.output))
+                self.assertTrue(all(payload not in line for line in logs.output))
+                with run_store._connect() as connection:
+                    row = connection.execute(
+                        "SELECT state_json, status FROM runs WHERE run_id = ?",
+                        (corrupt.run_id,),
+                    ).fetchone()
+                self.assertEqual(row["state_json"], payload)
+                self.assertEqual(row["status"], "running")
+                self.assertEqual(run_store.load_run(terminal.run_id), terminal)
+
     @staticmethod
     async def _collect(run_id):
         return [event async for event in events.subscribe(run_id)]
