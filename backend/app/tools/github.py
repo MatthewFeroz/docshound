@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from urllib.parse import quote
 
@@ -69,13 +70,22 @@ async def validate_github_access(
     try:
         account_payload = await request("/user")
         repository = await request(f"/repos/{repo}")
-        await request(f"/repos/{repo}/issues", params={"per_page": 1})
-        await request(f"/repos/{repo}/pulls", params={"per_page": 1})
         branch = str(repository.get("default_branch") or "main")
-        await request(
-            f"/repos/{repo}/git/trees/{quote(branch, safe='')}",
-            params={"recursive": 0},
-        )
+        checks = [
+            asyncio.create_task(request(f"/repos/{repo}/issues", params={"per_page": 1})),
+            asyncio.create_task(request(f"/repos/{repo}/pulls", params={"per_page": 1})),
+            asyncio.create_task(request(
+                f"/repos/{repo}/git/trees/{quote(branch, safe='')}",
+                params={"recursive": 0},
+            )),
+        ]
+        try:
+            await asyncio.gather(*checks)
+        finally:
+            for check in checks:
+                if not check.done():
+                    check.cancel()
+            await asyncio.gather(*checks, return_exceptions=True)
     finally:
         if owns_client:
             await github.aclose()
