@@ -363,6 +363,13 @@ class PublicWebTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "public address"):
             await validate_public_url("https://internal.example/docs")
 
+    async def test_nat64_addresses_are_checked_by_their_embedded_ipv4(self):
+        self.resolver.return_value = ["64:ff9b::a9fe:a9fe"]
+        with self.assertRaisesRegex(ValueError, "public address"):
+            await validate_public_url("https://metadata.example/latest")
+        self.resolver.return_value = ["64:ff9b::808:808"]
+        await validate_public_url("https://public.example/docs")
+
 
 if __name__ == "__main__":
     unittest.main()

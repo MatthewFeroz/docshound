@@ -41,7 +41,13 @@ def public_url_parts(url: str) -> ParseResult:
     return parsed
 
 
+_NAT64_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
+
+
 def _is_public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    # A NAT64 gateway translates 64:ff9b::/96 to the embedded IPv4 address.
+    if isinstance(address, ipaddress.IPv6Address) and address in _NAT64_PREFIX:
+        return _is_public_address(ipaddress.IPv4Address(address.packed[-4:]))
     return address.is_global and not address.is_multicast
 
 
