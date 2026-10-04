@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import "easymde/dist/easymde.min.css";
 
 import { Loading } from "./components/Status";
 import { HomePage } from "./pages/HomePage";
