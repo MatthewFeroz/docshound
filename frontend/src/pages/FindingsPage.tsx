@@ -21,8 +21,9 @@ type FindingStatus = keyof typeof findingStatuses;
 
 function findingStatus(finding: Finding): FindingStatus {
   const changeStatus = finding.documentation_change?.status;
+  if (changeStatus === "created") return changeStatus;
+  if (finding.cluster.review_status === "rejected") return "rejected";
   if (
-    changeStatus === "created" ||
     changeStatus === "branch_ready" ||
     changeStatus === "failed" ||
     changeStatus === "preview_ready"
@@ -30,7 +31,6 @@ function findingStatus(finding: Finding): FindingStatus {
     return changeStatus;
   if (finding.cluster.review_status === "no_change_needed")
     return "no_change_needed";
-  if (finding.cluster.review_status === "rejected") return "rejected";
   if (finding.cluster.review_status === "published") return "created";
   if (
     finding.approved_document ||

@@ -232,4 +232,17 @@ describe("FindingsPage triage", () => {
       within(heading.closest("article")!).getByText("Rejected"),
     ).toBeInTheDocument();
   });
+
+  it("shows a rejection even when an earlier patch was prepared", async () => {
+    apiMocks.listFindings.mockResolvedValue([
+      makeFinding("Rejected after patch", 0, "rejected", "preview_ready"),
+    ]);
+    renderPage();
+    const heading = await screen.findByRole("heading", {
+      name: "Rejected after patch",
+    });
+    expect(
+      within(heading.closest("article")!).getByText("Rejected"),
+    ).toBeInTheDocument();
+  });
 });
