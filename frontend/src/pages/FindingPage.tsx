@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { MarkdownEditor } from "../components/MarkdownEditor";
 import { api } from "../api";
@@ -10,27 +10,52 @@ import type { Finding } from "../types";
 export function FindingPage() {
   const { runId = "", index = "0" } = useParams();
   const findingIndex = Number(index);
+  const { hash } = useLocation();
   const navigate = useNavigate();
+  const draftEditor = useRef<HTMLElement>(null);
   const [finding, setFinding] = useState<Finding | null>(null);
   const [markdown, setMarkdown] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let disposed = false;
+    setFinding(null);
+    setMarkdown("");
+    setError(null);
     api
       .getFinding(runId, findingIndex)
       .then((loaded) => {
+        if (disposed) return;
         setFinding(loaded);
-        setMarkdown(loaded.cluster.draft_markdown || loaded.cluster.summary);
+        setMarkdown(
+          loaded.approved_document?.markdown ??
+            (loaded.cluster.draft_markdown || loaded.cluster.summary),
+        );
       })
-      .catch((requestError: unknown) =>
+      .catch((requestError: unknown) => {
+        if (disposed) return;
         setError(
           requestError instanceof Error
             ? requestError.message
             : "Could not load the finding.",
-        ),
-      );
+        );
+      });
+    return () => {
+      disposed = true;
+    };
   }, [findingIndex, runId]);
+
+  const focusDraftEditor = useCallback(() => {
+    if (hash === "#draft-editor") {
+      draftEditor.current?.focus({ preventScroll: true });
+      draftEditor.current?.scrollIntoView({ block: "start" });
+    }
+  }, [hash]);
+
+  useEffect(() => {
+    if (finding) focusDraftEditor();
+  }, [finding, focusDraftEditor]);
 
   async function approve(event: React.FormEvent) {
     event.preventDefault();
@@ -252,7 +277,13 @@ export function FindingPage() {
               </div>
             </section>
           ) : (
-            <section className="review-box finding-section draft-editor-section">
+            <section
+              className="review-box finding-section draft-editor-section"
+              id="draft-editor"
+              ref={draftEditor}
+              tabIndex={-1}
+              aria-label="Human review draft"
+            >
               <div className="review-label">Human review draft</div>
               <h3>{cluster.draft_title || cluster.name}</h3>
               <p>{cluster.draft_summary || cluster.summary}</p>
@@ -260,7 +291,11 @@ export function FindingPage() {
                 <label htmlFor="markdown-editor">
                   Edit the Markdown before approving
                 </label>
-                <MarkdownEditor value={markdown} onChange={setMarkdown} />
+                <MarkdownEditor
+                  value={markdown}
+                  onChange={setMarkdown}
+                  onReady={focusDraftEditor}
+                />
                 <div className="approval-form-actions">
                   <span>
                     The approved revision will be saved and opened as a
