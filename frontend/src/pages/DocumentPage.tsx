@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import remarkGfm from "remark-gfm";
@@ -9,7 +9,12 @@ import type { DocumentPayload } from "../types";
 
 export function DocumentPage() {
   const { slug = "" } = useParams();
+  return <DocumentReview key={slug} slug={slug} />;
+}
+
+function DocumentReview({ slug }: { slug: string }) {
   const navigate = useNavigate();
+  const active = useRef(false);
   const [payload, setPayload] = useState<DocumentPayload | null>(null);
   const [view, setView] = useState<"rendered" | "markdown">("rendered");
   const [targetRepo, setTargetRepo] = useState("");
@@ -19,9 +24,12 @@ export function DocumentPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let disposed = false;
+    active.current = true;
     api
       .getDocument(slug)
       .then((loaded) => {
+        if (disposed) return;
         setPayload(loaded);
         setTargetRepo(
           loaded.documentation_change?.target_repo ||
@@ -34,13 +42,18 @@ export function DocumentPage() {
             "",
         );
       })
-      .catch((requestError: unknown) =>
+      .catch((requestError: unknown) => {
+        if (disposed) return;
         setError(
           requestError instanceof Error
             ? requestError.message
             : "Could not load the document.",
-        ),
-      );
+        );
+      });
+    return () => {
+      disposed = true;
+      active.current = false;
+    };
   }, [slug]);
 
   async function copyMarkdown() {
@@ -61,15 +74,17 @@ export function DocumentPage() {
     setError(null);
     try {
       await api.previewPullRequest(slug, targetRepo, filePath);
+      if (!active.current) return;
       navigate(`/documents/${slug}/pull-request`);
     } catch (requestError) {
+      if (!active.current) return;
       setError(
         requestError instanceof Error
           ? requestError.message
           : "Could not prepare the change.",
       );
     } finally {
-      setSubmitting(false);
+      if (active.current) setSubmitting(false);
     }
   }
 
