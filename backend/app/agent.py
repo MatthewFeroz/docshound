@@ -1,8 +1,11 @@
+import asyncio
+import logging
+
 from app import events
 from app.config import get_settings
 from app.run_outcomes import apply_run_outcome
 from app.run_store import save_run
-from app.state import RUNS, AgentState, GapCluster, Issue, PullRequest, RunRequest
+from app.state import RUNS, AgentState, RunRequest
 from app.tracing import set_run_output, setup_tracing, traced_run
 from app.usage import RunUsage, track_run_usage
 
@@ -10,19 +13,11 @@ setup_tracing()
 
 from app.langgraph_agent import graph  # noqa: E402
 
+logger = logging.getLogger(__name__)
+
 
 async def run_agent(request: RunRequest, state: AgentState | None = None) -> AgentState:
     state = state or AgentState(repo=request.repo, dry_run=request.dry_run)
-    settings = get_settings()
-    state.scan_limits = {
-        "issues": request.limit,
-        "merged_pull_requests": request.limit,
-        "repository_documents": request.repo_docs_max_files
-        or settings.repo_docs_max_files,
-        "semantic_passages": request.nvidia_embed_max_passages
-        or settings.nvidia_embed_max_passages,
-    }
-    state.usage = RunUsage()
 
     def save_usage() -> None:
         save_run(state)
@@ -31,14 +26,23 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
         )
 
     RUNS[state.run_id] = state
-    save_run(state)
-
-    events.publish(
-        state.run_id,
-        {"type": "run_started", "run_id": state.run_id, "repo": state.repo},
-    )
 
     try:
+        settings = get_settings()
+        state.scan_limits = {
+            "issues": request.limit,
+            "merged_pull_requests": request.limit,
+            "repository_documents": request.repo_docs_max_files
+            or settings.repo_docs_max_files,
+            "semantic_passages": request.nvidia_embed_max_passages
+            or settings.nvidia_embed_max_passages,
+        }
+        state.usage = state.usage or RunUsage()
+        save_run(state)
+        events.publish(
+            state.run_id,
+            {"type": "run_started", "run_id": state.run_id, "repo": state.repo},
+        )
         documentation_source = (
             request.documentation_source.model_dump(mode="json")
             if request.documentation_source
@@ -91,69 +95,76 @@ async def run_agent(request: RunRequest, state: AgentState | None = None) -> Age
                     "tags": ["docshound", request.repo],
                 },
             )
+            _apply_graph_result(state, result)
             set_run_output(run_span, result)
+    except asyncio.CancelledError:
+        state.errors.append("The run was cancelled before completion.")
+        state.status = "failed"
+        raise
     except Exception as exc:
         state.errors.append(str(exc))
         state.status = "failed"
+    finally:
+        finalize_run(state)
+    return state
+
+
+def _apply_graph_result(state: AgentState, result: dict) -> None:
+    updates = {
+        "issues": result.get("issues", []),
+        "pull_requests": result.get("pull_requests", []),
+        "clusters": result.get("clusters", []),
+        "docs_sources": result.get("docs_sources", []),
+        "docs_candidates_inspected": result.get("docs_candidates_inspected", 0),
+        "documentation_issues_scraped": result.get("documentation_issues_scraped", 0),
+        "documentation_pull_requests_scraped": result.get(
+            "documentation_pull_requests_scraped", 0
+        ),
+        "decisions": result.get("decisions", []),
+        "warnings": result.get("warnings", []),
+        "errors": result.get("errors", []),
+    }
+    # Validate before replacing any partial state with an invalid graph result.
+    parsed = AgentState.model_validate(state.model_dump() | updates)
+    for name in updates:
+        setattr(state, name, getattr(parsed, name))
+    state.status = "completed_with_errors" if state.errors else "completed"
+
+
+def finalize_run(state: AgentState) -> None:
+    if state.status == "running":
+        state.status = "failed"
+        state.errors.append("The run stopped before completion.")
+    apply_run_outcome(state)
+    try:
+        save_run(state)
+    except Exception:
+        state.status = "failed"
+        state.errors.append("Could not save the final run state.")
         apply_run_outcome(state)
+        logger.exception("Could not save final state for run %s", state.run_id)
+
+    try:
         events.publish(
             state.run_id,
             {
                 "type": "run_completed",
+                "run_id": state.run_id,
                 "status": state.status,
                 "outcome": state.outcome,
                 "summary": state.summary,
+                "issues_scraped": len(state.issues),
+                "pull_requests_scraped": len(state.pull_requests),
+                "clusters_found": len(state.clusters),
+                "docs_sources_found": len(state.docs_sources),
+                "docs_candidates_inspected": state.docs_candidates_inspected,
+                "documentation_issues_scraped": state.documentation_issues_scraped,
+                "documentation_pull_requests_scraped": (
+                    state.documentation_pull_requests_scraped
+                ),
+                "warnings": state.warnings,
                 "errors": state.errors,
             },
         )
+    finally:
         events.close(state.run_id)
-        save_run(state)
-        return state
-
-    state.issues = [Issue.model_validate(issue) for issue in result.get("issues", [])]
-    state.pull_requests = [
-        PullRequest.model_validate(pull_request)
-        for pull_request in result.get("pull_requests", [])
-    ]
-    state.clusters = [
-        GapCluster.model_validate(cluster) for cluster in result.get("clusters", [])
-    ]
-    from app.state import DocSource
-
-    state.docs_sources = [
-        DocSource.model_validate(source) for source in result.get("docs_sources", [])
-    ]
-    state.docs_candidates_inspected = result.get("docs_candidates_inspected", 0)
-    state.documentation_issues_scraped = result.get("documentation_issues_scraped", 0)
-    state.documentation_pull_requests_scraped = result.get(
-        "documentation_pull_requests_scraped", 0
-    )
-    state.decisions = result.get("decisions", [])
-    state.warnings = result.get("warnings", [])
-    state.errors = result.get("errors", [])
-    state.status = "completed_with_errors" if state.errors else "completed"
-    apply_run_outcome(state)
-
-    events.publish(
-        state.run_id,
-        {
-            "type": "run_completed",
-            "status": state.status,
-            "outcome": state.outcome,
-            "summary": state.summary,
-            "issues_scraped": len(state.issues),
-            "pull_requests_scraped": len(state.pull_requests),
-            "clusters_found": len(state.clusters),
-            "docs_sources_found": len(state.docs_sources),
-            "docs_candidates_inspected": state.docs_candidates_inspected,
-            "documentation_issues_scraped": state.documentation_issues_scraped,
-            "documentation_pull_requests_scraped": (
-                state.documentation_pull_requests_scraped
-            ),
-            "warnings": state.warnings,
-            "errors": state.errors,
-        },
-    )
-    events.close(state.run_id)
-    save_run(state)
-    return state

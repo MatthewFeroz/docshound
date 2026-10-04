@@ -1,10 +1,16 @@
+import logging
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
+
 from app.database import DB_PATH, database_connection
+from app.run_outcomes import apply_run_outcome
 from app.state import AgentState
+
+logger = logging.getLogger(__name__)
 
 
 def save_run(state: AgentState) -> None:
@@ -33,19 +39,58 @@ def save_run(state: AgentState) -> None:
 def load_run(run_id: str) -> AgentState | None:
     with _connect() as connection:
         row = connection.execute(
-            "SELECT state_json FROM runs WHERE run_id = ?",
+            "SELECT run_id, state_json FROM runs WHERE run_id = ?",
             (run_id,),
         ).fetchone()
-    return AgentState.model_validate_json(row["state_json"]) if row else None
+    return _state_from_row(row) if row else None
 
 
 def load_runs(limit: int = 50) -> list[AgentState]:
     with _connect() as connection:
         rows = connection.execute(
-            "SELECT state_json FROM runs ORDER BY updated_at DESC LIMIT ?",
+            "SELECT run_id, state_json FROM runs ORDER BY updated_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
-    return [AgentState.model_validate_json(row["state_json"]) for row in rows]
+    return [state for row in rows if (state := _state_from_row(row)) is not None]
+
+
+def recover_interrupted_runs(active_run_ids: Collection[str] = ()) -> list[AgentState]:
+    """Finish orphaned runs once the single backend instance starts."""
+    recovered = []
+    now = datetime.now(UTC).isoformat()
+    with _connect() as connection:
+        rows = connection.execute(
+            "SELECT run_id, state_json FROM runs WHERE status = 'running'"
+        ).fetchall()
+        for row in rows:
+            if row["run_id"] in active_run_ids:
+                continue
+            state = _state_from_row(row)
+            if state is None:
+                continue
+            state.status = "failed"
+            state.errors.append(
+                "The backend restarted before this run completed. "
+                "Start a new run to try again."
+            )
+            apply_run_outcome(state)
+            connection.execute(
+                """
+                UPDATE runs SET status = ?, state_json = ?, updated_at = ?
+                WHERE run_id = ? AND status = 'running'
+                """,
+                (state.status, state.model_dump_json(), now, state.run_id),
+            )
+            recovered.append(state)
+    return recovered
+
+
+def _state_from_row(row: sqlite3.Row) -> AgentState | None:
+    try:
+        return AgentState.model_validate_json(row["state_json"])
+    except ValidationError:
+        logger.warning("Skipping unreadable persisted run %s", row["run_id"])
+        return None
 
 
 @contextmanager
