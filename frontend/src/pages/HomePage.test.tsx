@@ -7,7 +7,7 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
-import type { GapCluster, Run, RunEvent } from "../types";
+import type { GapCluster, Run, RunEvent, SourceResolution } from "../types";
 import { HomePage } from "./HomePage";
 
 const mocks = vi.hoisted(() => ({
@@ -408,6 +408,66 @@ describe("HomePage live analysis", () => {
     expect(
       await screen.findAllByText(/acme\/other-product \/ docs · 24 pages/i),
     ).not.toHaveLength(0);
+  });
+
+  it("waits for the new repository's documentation source before starting", async () => {
+    const { container } = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+    const repoInput = screen.getByPlaceholderText(/paste your repo/i);
+    fireEvent.change(repoInput, { target: { value: "acme/product" } });
+    await connectGitHub(container);
+    const runButton = screen.getByRole("button", { name: /run agent/i });
+    await waitFor(() => expect(runButton).toBeEnabled());
+
+    let resolve!: (resolution: SourceResolution) => void;
+    mocks.resolveSources.mockReturnValueOnce(
+      new Promise<SourceResolution>((onResolve) => {
+        resolve = onResolve;
+      }),
+    );
+    fireEvent.change(repoInput, { target: { value: "acme/other-product" } });
+    await waitFor(() =>
+      expect(mocks.resolveSources).toHaveBeenCalledWith("acme/other-product"),
+    );
+
+    expect(runButton).toBeDisabled();
+    expect(container.querySelector(".documentation-connect")).not.toHaveClass(
+      "is-ready",
+    );
+    expect(container.querySelector(".docs-source-current")).toBeNull();
+    fireEvent.submit(container.querySelector("#run-form")!);
+    expect(mocks.createRun).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Confirm the official documentation source before starting.",
+    );
+
+    const newSource = {
+      ...runningRun.documentation_source!,
+      repo: "acme/other-docs",
+      root: "content",
+    };
+    await act(async () =>
+      resolve({
+        product_repo: "acme/other-product",
+        documentation_sources: [newSource],
+        selected_source: newSource,
+        documentation_activity_repos: [],
+      }),
+    );
+    expect(runButton).toBeEnabled();
+    fireEvent.click(runButton);
+    await waitFor(() =>
+      expect(mocks.createRun).toHaveBeenCalledWith(
+        "acme/other-product",
+        newSource,
+        true,
+        expect.any(Object),
+      ),
+    );
+    expect(mocks.setGitHubApiKey).toHaveBeenCalledTimes(1);
   });
 
   it("does not clear a GitHub token being entered when the repository changes", async () => {
