@@ -109,6 +109,8 @@ def chunk_document(
     max_chars: int = 1400,
     overlap_chars: int = 180,
 ) -> list[str]:
+    if max_chars < 1 or not 0 <= overlap_chars < max_chars:
+        raise ValueError("Expected positive chunk size and smaller nonnegative overlap")
     normalized = re.sub(r"\n{3,}", "\n\n", text).strip()
     if not normalized:
         return []
@@ -129,13 +131,21 @@ def chunk_document(
             candidate = f"{current}\n\n{sentence}".strip() if current else sentence
             if current and len(candidate) > max_chars:
                 chunks.append(current)
-                overlap = current[-overlap_chars:].lstrip()
+                overlap = current[-overlap_chars:].lstrip() if overlap_chars else ""
                 current = f"{overlap} {sentence}".strip()
             else:
                 current = candidate
+            # Some pages contain a single long sentence, table row, or code block.
+            # Window those passages rather than truncating all text after the first chunk.
+            while len(current) > max_chars + overlap_chars:
+                boundary = current.rfind(" ", 0, max_chars + 1)
+                if boundary < max_chars // 2:
+                    boundary = max_chars
+                chunks.append(current[:boundary].rstrip())
+                current = current[boundary - overlap_chars :].lstrip()
     if current:
         chunks.append(current)
-    return [chunk[: max_chars + overlap_chars] for chunk in chunks if len(chunk) >= 50]
+    return [chunk for chunk in chunks if len(chunk) >= 50 or len(chunks) > 1]
 
 
 def source_confidence(chunk: RetrievedChunk) -> float:
