@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { api, assetUrl } from "../api";
@@ -7,6 +7,11 @@ import type { DocumentPayload } from "../types";
 
 export function PullRequestPage() {
   const { slug = "" } = useParams();
+  return <PullRequestReview key={slug} slug={slug} />;
+}
+
+function PullRequestReview({ slug }: { slug: string }) {
+  const active = useRef(false);
   const [payload, setPayload] = useState<DocumentPayload | null>(null);
   const [targetRepo, setTargetRepo] = useState("");
   const [filePath, setFilePath] = useState("");
@@ -14,22 +19,30 @@ export function PullRequestPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let disposed = false;
+    active.current = true;
     api
       .getDocument(slug)
       .then((loaded) => {
+        if (disposed) return;
         setPayload(loaded);
         setTargetRepo(
           loaded.documentation_change?.target_repo || loaded.document.repo,
         );
         setFilePath(loaded.documentation_change?.file_path || "");
       })
-      .catch((requestError: unknown) =>
+      .catch((requestError: unknown) => {
+        if (disposed) return;
         setError(
           requestError instanceof Error
             ? requestError.message
             : "Could not load the change.",
-        ),
-      );
+        );
+      });
+    return () => {
+      disposed = true;
+      active.current = false;
+    };
   }, [slug]);
 
   async function refreshPreview(event: React.FormEvent) {
@@ -38,16 +51,18 @@ export function PullRequestPage() {
     setError(null);
     try {
       const loaded = await api.previewPullRequest(slug, targetRepo, filePath);
+      if (!active.current) return;
       setPayload(loaded);
       setFilePath(loaded.documentation_change?.file_path || filePath);
     } catch (requestError) {
+      if (!active.current) return;
       setError(
         requestError instanceof Error
           ? requestError.message
           : "Could not refresh the preview.",
       );
     } finally {
-      setSubmitting(false);
+      if (active.current) setSubmitting(false);
     }
   }
 
@@ -55,15 +70,18 @@ export function PullRequestPage() {
     setSubmitting(true);
     setError(null);
     try {
-      setPayload(await api.createPullRequest(slug));
+      const loaded = await api.createPullRequest(slug);
+      if (!active.current) return;
+      setPayload(loaded);
     } catch (requestError) {
+      if (!active.current) return;
       setError(
         requestError instanceof Error
           ? requestError.message
           : "Could not create the pull request.",
       );
     } finally {
-      setSubmitting(false);
+      if (active.current) setSubmitting(false);
     }
   }
 
