@@ -226,6 +226,12 @@ curl -sS http://127.0.0.1:8000/api/v1/runs/<RUN_ID>
 curl -N http://127.0.0.1:8000/api/v1/runs/<RUN_ID>/events
 ```
 
+Each observer receives its own live event stream. New observers of an active run
+also receive up to its last 2,000 events. Slow observers retain a bounded recent
+window, so use the run state endpoint for a complete current snapshot. Completed
+streams are retained for at most 50 runs in process memory; persisted run state
+remains available after that event history expires.
+
 Completed run responses and `run_completed` events include a user-facing
 `outcome` and `summary`. Outcomes distinguish recommendations from
 `no_activity`, `no_recommendations`, `partial_failure`, and `failed`, so clients
