@@ -9,7 +9,7 @@ from app.tools.docs_discovery import (
     discover_document_urls,
     fetch_document_pages,
 )
-from app.tools.docs_retrieval import rank_chunks_for_gaps
+from app.tools.docs_retrieval import rank_lexical_evidence
 from app.tools.nvidia_embed import retrieve_semantic, select_pages
 from app.tools.nvidia_rerank import rerank_gap
 from app.tracing import observe_operation, publish_span_progress
@@ -51,23 +51,23 @@ async def website_pages(repo: str, docs_url: str | None) -> list[DocumentPage]:
 
 
 async def rank_evidence(clusters, pages, settings: Settings, per_gap: int):
-    ranked = await observe_operation(
+    use_models = settings.nvidia_embed_enabled or settings.nvidia_rerank_enabled
+    lexical = await observe_operation(
         "rank_docs_for_gaps",
-        rank_chunks_for_gaps,
+        rank_lexical_evidence,
         clusters,
         pages,
         per_gap=per_gap,
+        candidate_limit=settings.nvidia_rerank_candidates if use_models else 0,
         input_details={"gap_count": len(clusters), "page_count": len(pages)},
-        output_details=lambda value: {"excerpt_count": sum(map(len, value.values()))},
+        output_details=lambda value: {
+            "excerpt_count": sum(map(len, value.ranked.values()))
+        },
     )
-    if not (settings.nvidia_embed_enabled or settings.nvidia_rerank_enabled):
+    ranked = lexical.ranked
+    if not use_models:
         return ranked
-    candidates = rank_chunks_for_gaps(
-        clusters,
-        pages,
-        per_gap=settings.nvidia_rerank_candidates,
-        dedupe_pages=False,
-    )
+    candidates = lexical.candidates
     async with httpx.AsyncClient() as client:
         if settings.nvidia_embed_enabled:
             result = await observe_operation(

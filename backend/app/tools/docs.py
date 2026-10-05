@@ -273,7 +273,6 @@ async def search_official_docs(
             if _configured_github_token()
             else PUBLIC_DOCUMENTS_PER_FINDING
         )
-        ranked = _rank_documents(cluster, documents)
         if hybrid_ranked is not None:
             by_url = {d.url: d for d in documents}
             ranked = [
@@ -285,6 +284,8 @@ async def search_official_docs(
                 )
                 for chunk in hybrid_ranked.get(gap_index, [])
             ]
+        else:
+            ranked = _rank_documents(cluster, documents)
         if demo_target_path:
             target_document = next(
                 (
