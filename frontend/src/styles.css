@@ -2075,6 +2075,55 @@ main {
   font-family: var(--mono);
   font-size: 11px;
 }
+.findings-controls {
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  margin: 0 auto 24px;
+  max-width: 1120px;
+  padding: 20px;
+}
+.findings-filter-fields {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.findings-filter-fields label {
+  display: grid;
+  flex: 1 1 200px;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 8px;
+}
+.findings-filter-fields .findings-search {
+  flex: 3 1 280px;
+}
+.findings-filter-fields input,
+.findings-filter-fields select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  min-height: 40px;
+  min-width: 0;
+  padding: 10px 12px;
+  width: 100%;
+}
+.findings-filter-fields input:focus-visible,
+.findings-filter-fields select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.findings-filter-fields button {
+  min-height: 40px;
+}
+.findings-result-count {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 14px 0 0;
+}
 .marketplace-grid {
   display: grid;
   gap: 16px;
