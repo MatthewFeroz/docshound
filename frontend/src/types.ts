@@ -122,6 +122,7 @@ export interface DocumentationChange {
   error: string | null;
   created_at: string;
   updated_at: string;
+  is_current?: boolean;
 }
 
 export interface Finding {

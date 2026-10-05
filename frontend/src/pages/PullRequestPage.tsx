@@ -77,6 +77,10 @@ export function PullRequestPage() {
   const change = payload.documentation_change;
   const displayError =
     error || (change?.status === "failed" ? change.error : null);
+  const outdated =
+    change !== null &&
+    ["created", "branch_ready"].includes(change.status) &&
+    change.is_current === false;
 
   return (
     <div className="document-shell">
@@ -201,7 +205,15 @@ export function PullRequestPage() {
               </section>
               <footer className="pr-create-footer">
                 <div>
-                  {change.status === "created" ? (
+                  {outdated ? (
+                    <>
+                      <strong>The approved document changed</strong>
+                      <span>
+                        This patch is from an earlier revision. Refresh the
+                        preview, then publish to update the open pull request.
+                      </span>
+                    </>
+                  ) : change.status === "created" ? (
                     <>
                       <strong>Pull request #{change.pr_number} is ready</strong>
                       <span>

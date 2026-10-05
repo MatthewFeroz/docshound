@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import difflib
+import hashlib
 import json
 import re
 import sqlite3
@@ -13,19 +14,33 @@ from urllib.parse import quote
 
 import httpx2 as httpx
 
-from app.approved_documents import ApprovedDocument, document_body_markdown
+from app.approved_documents import (
+    ApprovedDocument,
+    document_body_markdown,
+    get_approved_document,
+)
 from app.config import get_settings
 from app.database import DB_PATH, database_connection
 from app.tools.github import configured_github_token
 
 GITHUB_API = "https://api.github.com"
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+PUBLISHED_STATUSES = ("created", "branch_ready")
 
 
 class DocumentationPullRequestError(RuntimeError):
     def __init__(self, message: str, *, status_code: int | None = None):
         super().__init__(message)
         self.status_code = status_code
+
+
+class StaleDocumentationPreviewError(DocumentationPullRequestError):
+    def __init__(self):
+        super().__init__(
+            "The approved document changed after this preview was prepared. Refresh "
+            "the preview, then publish again.",
+            status_code=409,
+        )
 
 
 @dataclass(frozen=True)
@@ -48,6 +63,27 @@ class DocumentationChange:
     error: str | None
     created_at: str
     updated_at: str
+    document_fingerprint: str | None = None
+
+
+def document_fingerprint(document: ApprovedDocument) -> str:
+    """Identify the approved revision that a preview's content was built from."""
+    revision = json.dumps([document.title, document.summary, document.markdown])
+    return hashlib.sha256(revision.encode("utf-8")).hexdigest()
+
+
+def invalidate_documentation_preview(document: ApprovedDocument) -> None:
+    """Discard an unpublished preview built from a different approved revision."""
+    with _connect() as connection:
+        connection.execute(
+            """
+            DELETE FROM documentation_changes
+            WHERE document_slug = ?
+                AND status NOT IN (?, ?)
+                AND (document_fingerprint IS NULL OR document_fingerprint != ?)
+            """,
+            (document.slug, *PUBLISHED_STATUSES, document_fingerprint(document)),
+        )
 
 
 async def prepare_documentation_change(
@@ -123,13 +159,24 @@ async def prepare_documentation_change(
         else _build_document_content(document, file_format)
     )
     patch = _build_patch(file_path, previous_content, content)
+    branch_name = _branch_name(document)
+    # Keep the link to a pull request this preview will update when published.
+    previous = get_documentation_change(document.slug)
+    published = (
+        previous
+        if previous
+        and previous.status in PUBLISHED_STATUSES
+        and previous.target_repo == target_repo
+        and previous.branch_name == branch_name
+        else None
+    )
     now = datetime.now(UTC).isoformat()
     change = DocumentationChange(
         document_slug=document.slug,
         target_repo=target_repo,
         publish_repo=None,
         base_branch=base_branch,
-        branch_name=_branch_name(document),
+        branch_name=branch_name,
         file_path=file_path,
         file_format=file_format,
         detected_by=detected_by,
@@ -138,11 +185,12 @@ async def prepare_documentation_change(
         patch=patch,
         existing_sha=existing_sha,
         status="preview_ready",
-        pr_number=None,
-        pr_url=None,
+        pr_number=published.pr_number if published else None,
+        pr_url=published.pr_url if published else None,
         error=None,
         created_at=now,
         updated_at=now,
+        document_fingerprint=document_fingerprint(document),
     )
     save_documentation_change(change)
     return change
@@ -155,6 +203,7 @@ async def create_documentation_pull_request(
     token: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> DocumentationChange:
+    _require_current_revision(document, change)
     if change.status == "created" and change.pr_url:
         return change
 
@@ -185,7 +234,7 @@ async def create_documentation_pull_request(
                 error=None,
                 updated_at=datetime.now(UTC).isoformat(),
             )
-            save_documentation_change(change)
+            _save_if_current(document, change)
             base_ref = await _request_json(
                 github,
                 "GET",
@@ -255,6 +304,10 @@ async def create_documentation_pull_request(
             if branch_file_sha:
                 content_payload["sha"] = branch_file_sha
             if branch_content != change.content:
+                # The approval can change while the GitHub requests above run.
+                _require_current_revision(
+                    get_approved_document(document.slug) or document, change
+                )
                 await _request_json(
                     github,
                     "PUT",
@@ -332,8 +385,23 @@ async def create_documentation_pull_request(
             error=str(exc),
             updated_at=datetime.now(UTC).isoformat(),
         )
-        save_documentation_change(failed)
+        _save_if_current(document, failed)
         raise
+
+
+def _require_current_revision(
+    document: ApprovedDocument,
+    change: DocumentationChange,
+) -> None:
+    if change.document_fingerprint != document_fingerprint(document):
+        raise StaleDocumentationPreviewError()
+
+
+def _save_if_current(document: ApprovedDocument, change: DocumentationChange) -> None:
+    """Save unpublished state unless a newer approval has discarded its preview."""
+    current = get_approved_document(document.slug) or document
+    if change.document_fingerprint == document_fingerprint(current):
+        save_documentation_change(change)
 
 
 def get_documentation_change(document_slug: str) -> DocumentationChange | None:
@@ -352,8 +420,9 @@ def save_documentation_change(change: DocumentationChange) -> None:
             INSERT INTO documentation_changes (
                 document_slug, target_repo, publish_repo, base_branch, branch_name,
                 file_path, file_format, detected_by, edit_action, content, patch,
-                existing_sha, status, pr_number, pr_url, error, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                existing_sha, status, pr_number, pr_url, error, created_at, updated_at,
+                document_fingerprint
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(document_slug) DO UPDATE SET
                 target_repo = excluded.target_repo,
                 publish_repo = excluded.publish_repo,
@@ -370,7 +439,8 @@ def save_documentation_change(change: DocumentationChange) -> None:
                 pr_number = excluded.pr_number,
                 pr_url = excluded.pr_url,
                 error = excluded.error,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                document_fingerprint = excluded.document_fingerprint
             """,
             (
                 change.document_slug,
@@ -391,6 +461,7 @@ def save_documentation_change(change: DocumentationChange) -> None:
                 change.error,
                 change.created_at,
                 change.updated_at,
+                change.document_fingerprint,
             ),
         )
 
@@ -815,7 +886,8 @@ def _connect() -> Iterator[sqlite3.Connection]:
                 pr_url TEXT,
                 error TEXT,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                document_fingerprint TEXT
             )
             """
         )
@@ -831,6 +903,10 @@ def _connect() -> Iterator[sqlite3.Connection]:
         if "publish_repo" not in columns:
             connection.execute(
                 "ALTER TABLE documentation_changes ADD COLUMN publish_repo TEXT"
+            )
+        if "document_fingerprint" not in columns:
+            connection.execute(
+                "ALTER TABLE documentation_changes ADD COLUMN document_fingerprint TEXT"
             )
         yield connection
 
@@ -855,4 +931,5 @@ def _change_from_row(row: sqlite3.Row) -> DocumentationChange:
         error=row["error"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        document_fingerprint=row["document_fingerprint"],
     )

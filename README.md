@@ -240,6 +240,11 @@ error for a successful run.
 
 The API also exposes findings, approval/rejection, approved documents,
 repository patch previews, patch downloads, and pull-request creation.
+Each patch preview records the approved revision it was built from. Approving a
+changed document discards its unpublished preview, and publishing a preview for
+an earlier revision returns HTTP 409. To update an existing documentation pull
+request after editing, refresh the preview and publish again; DocsHound pushes the
+new revision to the same branch and pull request.
 
 For compatibility with existing integrations, `POST /runs`,
 `GET /runs/{run_id}`, and `GET /runs/{run_id}/events.json` remain available as

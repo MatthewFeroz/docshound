@@ -68,6 +68,8 @@ class DocumentationChangeResponse(BaseModel):
     error: str | None
     created_at: str
     updated_at: str
+    # False once the approved document changes after this change was prepared.
+    is_current: bool = True
 
 
 class FindingResponse(BaseModel):

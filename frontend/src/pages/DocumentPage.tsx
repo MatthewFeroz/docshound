@@ -81,6 +81,9 @@ export function DocumentPage() {
     );
   if (!payload) return <Loading label="Loading document…" />;
   const { document, documentation_change: change } = payload;
+  const published =
+    change !== null && ["created", "branch_ready"].includes(change.status);
+  const outdated = published && change.is_current === false;
 
   return (
     <div className="document-shell">
@@ -179,7 +182,15 @@ export function DocumentPage() {
           <section className="document-export">
             <div>
               <span className="document-export-kicker">Next step</span>
-              {change?.status === "created" ? (
+              {outdated ? (
+                <>
+                  <h2>The approved document changed</h2>
+                  <p>
+                    The open pull request has an earlier revision. Refresh the
+                    change, then publish to update it.
+                  </p>
+                </>
+              ) : change?.status === "created" ? (
                 <>
                   <h2>Documentation pull request created</h2>
                   <p>
@@ -217,9 +228,7 @@ export function DocumentPage() {
                 </>
               )}
             </div>
-            {change &&
-            ["created", "branch_ready"].includes(change.status) &&
-            change.pr_url ? (
+            {published && !outdated && change.pr_url ? (
               <a
                 className="document-primary-action"
                 href={change.pr_url}

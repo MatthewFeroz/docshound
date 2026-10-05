@@ -1,10 +1,13 @@
+import asyncio
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx2 as httpx
 from fastapi.testclient import TestClient
 
 from app import approved_documents, documentation_prs, run_store
@@ -390,6 +393,93 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(rejection.status_code, 200)
         self.assertEqual(rejection.json()["cluster"]["review_status"], "rejected")
+
+    def _prepare_preview(self, slug: str):
+        def handler(request):
+            if request.url.path == "/repos/acme/docs":
+                return httpx.Response(200, json={"default_branch": "main"})
+            if request.url.path.endswith("/git/trees/main"):
+                return httpx.Response(200, json={"tree": []})
+            raise AssertionError(request.url.path)
+
+        async def prepare():
+            async with httpx.AsyncClient(
+                base_url="https://api.github.test",
+                transport=httpx.MockTransport(handler),
+            ) as client:
+                return await documentation_prs.prepare_documentation_change(
+                    approved_documents.get_approved_document(slug),
+                    target_repo="acme/docs",
+                    client=client,
+                )
+
+        return asyncio.run(prepare())
+
+    def test_changed_approval_removes_the_preview_and_patch(self) -> None:
+        state = self._seed_run()
+        approval_path = f"/api/v1/runs/{state.run_id}/findings/0/approval"
+        first = self.client.post(
+            approval_path, json={"markdown": "# Retries\n\nUse three attempts."}
+        )
+        slug = first.json()["document"]["slug"]
+        self._prepare_preview(slug)
+
+        revised = self.client.post(
+            approval_path, json={"markdown": "# Retries\n\nUse five attempts."}
+        )
+
+        self.assertEqual(revised.status_code, 200)
+        self.assertIsNone(revised.json()["documentation_change"])
+        patch_response = self.client.get(f"/api/v1/documents/{slug}/patch")
+        self.assertEqual(patch_response.status_code, 404)
+
+    def test_stale_preview_publication_returns_a_conflict(self) -> None:
+        state = self._seed_run()
+        first = self.client.post(
+            f"/api/v1/runs/{state.run_id}/findings/0/approval",
+            json={"markdown": "# Retries\n\nUse three attempts."},
+        )
+        slug = first.json()["document"]["slug"]
+        change = self._prepare_preview(slug)
+        documentation_prs.save_documentation_change(
+            replace(change, document_fingerprint=None)
+        )
+
+        response = self.client.post(f"/api/v1/documents/{slug}/pull-request")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Refresh the preview", response.json()["detail"])
+
+    def test_published_change_reports_an_earlier_revision(self) -> None:
+        state = self._seed_run()
+        approval_path = f"/api/v1/runs/{state.run_id}/findings/0/approval"
+        first = self.client.post(
+            approval_path, json={"markdown": "# Retries\n\nUse three attempts."}
+        )
+        slug = first.json()["document"]["slug"]
+        change = self._prepare_preview(slug)
+        documentation_prs.save_documentation_change(
+            replace(
+                change,
+                status="created",
+                pr_number=87,
+                pr_url="https://github.com/acme/docs/pull/87",
+            )
+        )
+        current = self.client.get(f"/api/v1/documents/{slug}").json()
+        self.assertTrue(current["documentation_change"]["is_current"])
+
+        revised = self.client.post(
+            approval_path, json={"markdown": "# Retries\n\nUse five attempts."}
+        )
+        published = revised.json()["documentation_change"]
+        finding = self.client.get(f"/api/v1/runs/{state.run_id}/findings/0")
+        response = self.client.post(f"/api/v1/documents/{slug}/pull-request")
+
+        self.assertEqual(published["status"], "created")
+        self.assertFalse(published["is_current"])
+        self.assertFalse(finding.json()["documentation_change"]["is_current"])
+        self.assertEqual(response.status_code, 409)
 
 
 if __name__ == "__main__":
