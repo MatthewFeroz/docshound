@@ -8,17 +8,21 @@ import "easymde/dist/easymde.min.css";
 export function MarkdownEditor({
   value,
   onChange,
+  onReady,
 }: {
   value: string;
   onChange: (value: string) => void;
+  onReady?: () => void;
 }) {
   const textarea = useRef<HTMLTextAreaElement>(null);
   const instance = useRef<EasyMDE | null>(null);
   const change = useRef(onChange);
   const current = useRef(value);
+  const ready = useRef(onReady);
   const [feedback, setFeedback] = useState("");
   change.current = onChange;
   current.current = value;
+  ready.current = onReady;
   useEffect(() => {
     let disposed = false;
     void import("easymde")
@@ -120,6 +124,7 @@ export function MarkdownEditor({
           .forEach((item) => {
             item.tabIndex = 0;
           });
+        ready.current?.();
       })
       .catch(() =>
         setFeedback(
