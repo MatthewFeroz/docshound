@@ -2,7 +2,7 @@ import asyncio
 import ipaddress
 import re
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -17,6 +17,7 @@ from app.runtime_credentials import get_github_api_token
 MAX_DOCUMENT_URLS = 40
 MAX_SITEMAPS = 8
 PAGE_CACHE_TTL_SECONDS = 600
+PAGE_CACHE_MAX_ENTRIES = 128
 
 _LOCALE_SEGMENTS = {
     "ar",
@@ -61,7 +62,7 @@ _NON_DOCUMENT_EXTENSIONS = {
     ".xml",
     ".zip",
 }
-_PAGE_CACHE: dict[str, tuple[float, "DocumentPage | None"]] = {}
+_PAGE_CACHE: OrderedDict[str, tuple[float, "DocumentPage | None"]] = OrderedDict()
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,33 @@ class DocumentPage:
     text: str
     source_type: str = "official_docs"
     links: tuple[tuple[str, str], ...] = ()
+
+
+def _prune_page_cache() -> None:
+    now = time.monotonic()
+    expired = [
+        url
+        for url, (stored_at, _) in _PAGE_CACHE.items()
+        if now - stored_at >= PAGE_CACHE_TTL_SECONDS
+    ]
+    for url in expired:
+        del _PAGE_CACHE[url]
+
+
+def _cached_document_page(url: str) -> tuple[float, DocumentPage | None] | None:
+    _prune_page_cache()
+    cached = _PAGE_CACHE.get(url)
+    if cached is not None:
+        _PAGE_CACHE.move_to_end(url)
+    return cached
+
+
+def _cache_document_page(url: str, page: DocumentPage | None) -> None:
+    _prune_page_cache()
+    _PAGE_CACHE[url] = (time.monotonic(), page)
+    _PAGE_CACHE.move_to_end(url)
+    while len(_PAGE_CACHE) > PAGE_CACHE_MAX_ENTRIES:
+        _PAGE_CACHE.popitem(last=False)
 
 
 class _ReadableHTMLParser(HTMLParser):
@@ -294,20 +322,20 @@ async def fetch_document_page(
     if not normalized:
         return None
 
-    cached = _PAGE_CACHE.get(normalized)
-    if cached and time.monotonic() - cached[0] < PAGE_CACHE_TTL_SECONDS:
+    cached = _cached_document_page(normalized)
+    if cached is not None:
         return cached[1]
 
     try:
         response = await client.get(normalized)
         response.raise_for_status()
     except Exception:
-        _PAGE_CACHE[normalized] = (time.monotonic(), None)
+        _cache_document_page(normalized, None)
         return None
 
     final_url = _normalize_public_url(str(response.url))
     if not final_url:
-        _PAGE_CACHE[normalized] = (time.monotonic(), None)
+        _cache_document_page(normalized, None)
         return None
 
     content_type = response.headers.get("content-type", "").lower()
@@ -330,7 +358,7 @@ async def fetch_document_page(
         text=text[:150_000],
         links=links,
     )
-    _PAGE_CACHE[normalized] = (time.monotonic(), page)
+    _cache_document_page(normalized, page)
     return page
 
 
