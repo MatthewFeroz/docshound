@@ -142,23 +142,27 @@ async def _passage_vectors(
         for s in inputs
     ]
     found: dict[int, tuple[float, ...]] = {}
-    missing: list[int] = []
+    missing: dict[tuple[str, str, str], list[int]] = {}
     for index, key in enumerate(keys):
         cached = _CACHE.get(key)
         if cached and monotonic() - cached[0] < CACHE_TTL_SECONDS:
             found[index] = cached[1]
             _CACHE.move_to_end(key)
         else:
-            missing.append(index)
+            missing.setdefault(key, []).append(index)
     cache_hits = len(found)
     if missing:
         vectors = await _embed(
-            client, [inputs[index] for index in missing], "passage", settings
+            client,
+            [inputs[indices[0]] for indices in missing.values()],
+            "passage",
+            settings,
         )
-        for index, vector in zip(missing, vectors, strict=True):
-            found[index] = vector
-            _CACHE[keys[index]] = (monotonic(), vector)
-            _CACHE.move_to_end(keys[index])
+        for (key, indices), vector in zip(missing.items(), vectors, strict=True):
+            for index in indices:
+                found[index] = vector
+            _CACHE[key] = (monotonic(), vector)
+            _CACHE.move_to_end(key)
             while len(_CACHE) > CACHE_SIZE:
                 _CACHE.popitem(last=False)
     return [found[index] for index in range(len(inputs))], cache_hits
