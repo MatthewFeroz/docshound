@@ -664,10 +664,14 @@ export function HomePage() {
   }, [documentationReady, githubReady, modelReady, repoReady]);
 
   useEffect(() => {
+    setSourceResolution(null);
+    setDocumentationSource(null);
+    setSourceError(null);
+    setOverrideRepo("");
+    setOverrideRoot("");
+    setShowSourceOverride(false);
     if (!githubReady || !selectedRepo) {
-      setSourceResolution(null);
-      setDocumentationSource(null);
-      setSourceError(null);
+      setResolvingSources(false);
       return;
     }
 
