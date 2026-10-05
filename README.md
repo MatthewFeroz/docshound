@@ -153,6 +153,15 @@ credential entry is disabled when `APP_ENV` is `production`; production
 deployments should inject `GITHUB_TOKEN` and `MERGE_GATEWAY_API_KEY` through the
 server's secret manager.
 
+Public website fetches check URLs and DNS answers before each request, including
+redirect targets. They request uncompressed responses and treat replies that
+still advertise compression as unavailable. Documentation pages retain a prefix
+of up to 500,000 bytes before text extraction. Robots.txt, sitemap, and
+documentation-source homepage responses above 2,000,000 bytes are unavailable.
+The HTTP transport resolves hostnames separately from the DNS
+preflight, so deployments that require DNS rebinding protection should also
+enforce network egress restrictions.
+
 ### OpenTelemetry and OpenInference tracing
 
 DocsHound produces one vendor-neutral OpenTelemetry trace stream enriched with

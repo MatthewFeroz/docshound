@@ -960,43 +960,6 @@ def _validate_coverage_item(item: object) -> None:
     )
 
 
-async def _extract_docs_url(
-    docs_url: str, clusters: list[GapCluster]
-) -> list[DocSource]:
-    try:
-        async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
-            response = await client.get(docs_url, headers={"User-Agent": "docshound"})
-        response.raise_for_status()
-    except Exception as exc:
-        return [
-            DocSource(
-                title="Official docs source unavailable",
-                url=docs_url,
-                snippet=f"The configured docs URL could not be fetched: {exc}",
-                source_type="official_docs_error",
-                confidence=0.25,
-            )
-        ]
-
-    parsed = urlparse(str(response.url))
-    title = parsed.netloc or docs_url
-    match = re.search(r"<title[^>]*>(.*?)</title>", response.text, re.I | re.S)
-    if match:
-        title = " ".join(match.group(1).split())[:120] or title
-    return [
-        DocSource(
-            title=title,
-            url=str(response.url),
-            snippet=(
-                "Configured first-party documentation homepage. Repository pages are "
-                "searched separately for each finding."
-            ),
-            source_type="official_docs_homepage",
-            confidence=0.8,
-        )
-    ]
-
-
 @asynccontextmanager
 async def _github_client(token: str | None, client: httpx.AsyncClient | None):
     if client is not None:

@@ -1,8 +1,5 @@
-import asyncio
 import base64
-import ipaddress
 import re
-import socket
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from html import unescape
@@ -14,6 +11,7 @@ import httpx2 as httpx
 from app.config import get_settings
 from app.runtime_credentials import get_github_api_token
 from app.state import DocumentationSource
+from app.tools.public_web import fetch_public_text
 
 GITHUB_API = "https://api.github.com"
 DOC_EXTENSIONS = {".md", ".mdx"}
@@ -455,61 +453,15 @@ def _is_external_http_url(value: str) -> bool:
 
 
 async def _fetch_public_html(url: str) -> tuple[str, str]:
-    current = url
     async with httpx.AsyncClient(timeout=12, follow_redirects=False) as client:
-        for _redirect in range(4):
-            await _validate_public_url(current)
-            async with client.stream(
-                "GET",
-                current,
-                headers={"User-Agent": "DocsHound/1.0 documentation-source-resolver"},
-            ) as response:
-                if response.is_redirect:
-                    location = response.headers.get("location")
-                    if not location:
-                        raise ValueError(
-                            "Documentation site returned an empty redirect"
-                        )
-                    current = urljoin(current, location)
-                    continue
-                response.raise_for_status()
-                content_type = response.headers.get("content-type", "")
-                if content_type and not any(
-                    item in content_type.lower()
-                    for item in ("text/html", "application/xhtml+xml")
-                ):
-                    raise ValueError("Documentation URL did not return HTML")
-                chunks: list[bytes] = []
-                size = 0
-                async for chunk in response.aiter_bytes():
-                    size += len(chunk)
-                    if size > MAX_WEBSITE_BYTES:
-                        raise ValueError(
-                            "Documentation homepage exceeded the size limit"
-                        )
-                    chunks.append(chunk)
-                return b"".join(chunks).decode(
-                    response.encoding or "utf-8", "replace"
-                ), str(response.url)
-    raise ValueError("Documentation site redirected too many times")
-
-
-async def _validate_public_url(url: str) -> None:
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("Documentation URL must be an HTTP or HTTPS URL")
-    if parsed.username or parsed.password:
-        raise ValueError("Documentation URL cannot contain credentials")
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    addresses = await asyncio.get_running_loop().getaddrinfo(
-        parsed.hostname,
-        port,
-        type=socket.SOCK_STREAM,
-    )
-    for address in addresses:
-        ip = ipaddress.ip_address(address[4][0])
-        if not ip.is_global:
-            raise ValueError("Documentation URL must resolve to a public address")
+        response = await fetch_public_text(
+            client,
+            url,
+            max_bytes=MAX_WEBSITE_BYTES,
+            html_only=True,
+            user_agent="DocsHound/1.0 documentation-source-resolver",
+        )
+    return response.text, response.url
 
 
 async def _load_repository(
