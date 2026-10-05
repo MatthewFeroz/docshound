@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from app.database import DB_PATH, database_connection
+from app.markdown_sections import without_generated_sources
 
 
 @dataclass(frozen=True)
@@ -24,10 +25,7 @@ class ApprovedDocument:
 
 
 def document_body_markdown(source: str) -> str:
-    for heading in ("## Sources", "## Source GitHub issues", "## Source issues"):
-        if heading in source:
-            return source.split(heading, 1)[0].rstrip()
-    return source.strip()
+    return without_generated_sources(source)
 
 
 def save_approved_document(
